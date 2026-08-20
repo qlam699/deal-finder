@@ -1,144 +1,383 @@
-# Chotot Deal Finder (README tiếng Việt)
+# Chotot Deal Finder — Dev Spec (Tiếng Việt)
 
-Tài liệu này giải thích nhanh source code hiện tại của dự án `olddevice-chotot`.
+Tài liệu đặc tả kỹ thuật cho dự án `olddevice-chotot`: web app quét tin Chợ Tốt, ước lượng giá thị trường bằng AI, hỗ trợ quyết định mua đi bán lại.
 
-## 1) Mục tiêu dự án
+> Bản tiếng Anh: [`README.md`](./README.md)
 
-Web app giúp bạn:
-- Quét tin mới từ Chợ Tốt theo danh mục đã bật.
-- Ước lượng giá thị trường bằng chuỗi fallback nhiều provider AI.
-- Tính `% chênh lệch` để hỗ trợ quyết định mua đi bán lại.
-- Quản lý API key ngay trên UI.
+---
 
-## 2) Công nghệ chính
+## 1. Tổng quan
 
-- `Next.js 16` + App Router
-- `React 19` + `TypeScript`
-- `SQLite` qua `better-sqlite3`
-- `shadcn/ui` cho giao diện
-- `@google/generative-ai`, `openai` SDK (dùng cho DeepSeek/Qwen/OpenRouter qua baseURL)
-- `cheerio` để parse HTML khi scrape fallback
+### 1.1 Mục tiêu sản phẩm
 
-## 3) Cấu trúc source quan trọng
+- Quét tin đăng mới theo danh mục cấu hình được (điện thoại, laptop, ...).
+- Định giá thị trường bằng chuỗi fallback nhiều AI provider.
+- Tính % chênh lệch giữa giá Chợ Tốt và giá thị trường.
+- Giúp người dùng quyết định có nên mua để lướt (mua đi bán lại) hay không.
+- Quản lý API key, danh mục, thùng rác ngay trên UI.
 
-- `src/app/page.tsx`  
-  Entry page, render `ClientPage`.
+### 1.2 Phạm vi hiện tại (MVP)
 
-- `src/app/client-page.tsx`  
-  Load dashboard bằng `dynamic(..., { ssr: false })` để tránh hydration mismatch khi extension trình duyệt inject HTML attributes.
+- Chạy local với Next.js + SQLite.
+- Scrape Chợ Tốt qua public gateway API.
+- Định giá: Gemini → DeepSeek → Qwen → OpenRouter → scrape thuần.
+- Soft delete / hard delete / empty trash.
+- Lịch sử `seen_products` để không quét lại tin đã từng thấy (kể cả sau khi xóa vĩnh viễn).
+- Phân trang server-side, tìm kiếm theo title / mã tin.
 
-- `src/components/dashboard.tsx`  
-  UI chính gồm 3 tab:
-  - Sản phẩm
-  - Danh mục
-  - API Keys
+### 1.3 Ngoài phạm vi (chưa làm)
 
-- `src/lib/db.ts`  
-  Kết nối SQLite, tạo schema và helper truy vấn.
+- Deploy production / multi-user auth.
+- Mã hóa API key khi lưu DB.
+- Thông báo Telegram / Email.
+- Cron bền vững ngoài process Next.js.
 
-- `src/lib/scraper.ts`  
-  Quét dữ liệu từ Chợ Tốt public API và lưu vào DB.
+---
 
-- `src/lib/price-checker.ts`  
-  Logic định giá + fallback chain nhiều provider.
+## 2. Tech stack
 
-- `src/app/api/*/route.ts`  
-  Các API nội bộ cho frontend gọi.
+| Thành phần | Công nghệ |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| UI | React 19, TypeScript, Tailwind CSS 4, shadcn/ui (Base UI) |
+| Database | SQLite (`better-sqlite3`), file `data.db` |
+| AI | `@google/generative-ai`, `openai` SDK (DeepSeek / Qwen / OpenRouter) |
+| Scrape hỗ trợ | `cheerio` |
+| Runtime local | `npm run dev` / `npm run build` + `npm start` |
 
-## 4) Thiết kế database
+---
 
-File DB: `data.db` (tự tạo ở root project).
+## 3. Kiến trúc
 
-Các bảng:
+```text
+┌──────────────────┐
+│  Dashboard UI    │  src/components/dashboard.tsx
+│  (client-only)   │
+└────────┬─────────┘
+         │ fetch
+┌────────▼─────────┐
+│  Next.js API     │  src/app/api/*/route.ts
+└────────┬─────────┘
+         │
+   ┌─────┴──────┐
+   ▼            ▼
+scraper.ts   price-checker.ts
+   │            │
+   └─────┬──────┘
+         ▼
+      db.ts  →  data.db (SQLite)
+```
 
-- `categories`
-  - Danh mục theo dõi (`name`, `chotot_category_id`, `enabled`)
-  - Seed mặc định: Điện thoại, Laptop, Máy tính bảng.
+### Luồng chính
 
-- `products`
-  - Tin scrape từ Chợ Tốt (`chotot_id`, `title`, `price`, `market_price`, `profit_margin`, ...)
-  - `checked = 0/1` để biết đã định giá hay chưa.
+1. User bấm **Quét sản phẩm mới** → `POST /api/scrape`.
+2. `scrapeAllCategories()` gọi Chợ Tốt API theo danh mục `enabled`.
+3. Tin mới (chưa có trong `seen_products`) được insert vào `products`.
+4. Lấy batch sản phẩm `checked = 0`, ưu tiên `listed_at` mới nhất.
+5. `checkPrice(title + body)` chạy fallback chain AI.
+6. Cập nhật `market_price`, `profit_margin`, `checked = 1`.
+7. UI hiển thị bảng + % chênh lệch.
 
-- `api_keys`
-  - Lưu nhiều key theo provider (`gemini`, `deepseek`, `qwen`, `openrouter`)
-  - Có `priority`, `requests_today`, `status`, `last_error`.
+---
 
-- `settings`
-  - Dự phòng cấu hình key-value.
+## 4. Cấu trúc thư mục
 
-## 5) Luồng xử lý chính
+```text
+src/
+  app/
+    page.tsx                 # Entry page
+    client-page.tsx          # dynamic import dashboard, ssr:false
+    layout.tsx               # Root layout + metadata
+    api/
+      scrape/route.ts        # Quét + định giá batch
+      products/route.ts      # CRUD list / trash / pagination / search
+      categories/route.ts    # Danh mục
+      api-keys/route.ts      # Quản lý API key
+      cron/route.ts          # Cron in-memory
+  components/
+    dashboard.tsx            # UI chính (tabs)
+    ui/                      # shadcn components
+  lib/
+    db.ts                    # Schema + helpers SQLite
+    scraper.ts               # Chợ Tốt scraper
+    price-checker.ts         # Định giá + fallback AI
+    utils.ts                 # cn() helper
+data.db                      # SQLite (gitignore)
+```
 
-1. User bấm **Quét sản phẩm mới** trên UI.
-2. `POST /api/scrape` chạy:
-   - `scrapeAllCategories()` lấy tin mới từ Chợ Tốt.
-   - Lấy danh sách sản phẩm chưa check giá (`getUncheckedProducts`).
-   - Chạy `checkPrice(...)` cho từng sản phẩm.
-3. `checkPrice` thử lần lượt theo provider:
-   - `gemini` -> `deepseek` -> `qwen` -> `openrouter`
-   - Nếu fail hết, fallback cuối: scrape giá trực tiếp từ web bán lẻ.
-4. Khi có giá thị trường:
-   - Tính `% chênh lệch` và cập nhật vào `products`.
+---
 
-## 6) Fallback chain định giá
+## 5. Database schema
 
-Trong `src/lib/price-checker.ts`:
+File: `data.db` (tự tạo khi app chạy lần đầu).
 
-- **Gemini**
-  - Dùng `gemini-2.5-flash` + `googleSearch` tool.
-  - Prompt yêu cầu trả JSON `{min,max,average,sources}`.
+Timezone: dùng `datetime('now', 'localtime')` / parse `+07:00` (giờ VN).
 
-- **DeepSeek / Qwen / OpenRouter**
-  - Lấy dữ liệu scrape hỗ trợ (`scrapeDataForAI`) rồi gửi model phân tích.
+### 5.1 `seen_products`
 
-- **Scrape thuần**
-  - Parse giá bằng `cheerio` từ kết quả tìm kiếm, lấy trung bình.
+| Cột | Kiểu | Mô tả |
+|---|---|---|
+| `chotot_id` | TEXT PK | ID tin Chợ Tốt đã từng quét |
+| `first_seen_at` | TEXT | Lần đầu thấy |
 
-## 7) API nội bộ
+**Quy tắc:** Xóa vĩnh viễn trong `products` **không** xóa `seen_products` → lần sau bỏ qua tin cũ.
 
-- `POST /api/scrape`
-  - Quét dữ liệu + định giá một batch sản phẩm mới.
+### 5.2 `categories`
 
-- `GET /api/products?category=&limit=&offset=&sortBy=`
-  - Lấy danh sách sản phẩm để hiển thị bảng.
+| Cột | Kiểu | Mô tả |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `name` | TEXT | Tên hiển thị |
+| `chotot_category_id` | TEXT | Mã `cg` Chợ Tốt (vd: `5010`) |
+| `enabled` | INTEGER | 1 = đang theo dõi |
 
-- `GET/POST /api/categories`
-  - `GET`: lấy danh mục
-  - `POST action=toggle|add`: bật/tắt hoặc thêm danh mục
+Seed mặc định: Điện thoại (`5010`), Laptop (`5020`), Máy tính bảng (`5030`).
 
-- `GET/POST /api/api-keys`
-  - `GET`: trả danh sách key đã mask (ẩn bớt ký tự)
-  - `POST action=add|delete|reset`
+### 5.3 `products`
 
-- `POST /api/cron`
-  - `action=start|stop|status`
-  - Dùng `setInterval` trong runtime server để chạy lặp theo phút.
+| Cột | Kiểu | Mô tả |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `chotot_id` | TEXT UNIQUE | ID tin |
+| `title` | TEXT | Tiêu đề |
+| `price` | INTEGER | Giá Chợ Tốt (VND) |
+| `listed_at` | INTEGER | Timestamp đăng tin (ms) |
+| `category` | TEXT | Tên danh mục |
+| `image` | TEXT | URL ảnh |
+| `url` | TEXT | Link tin |
+| `market_price` | INTEGER | Giá thị trường ước lượng |
+| `profit_margin` | REAL | % chênh lệch |
+| `created_at` | TEXT | Thời điểm lưu DB (local VN) |
+| `checked` | INTEGER | 0 chưa định giá / 1 đã định giá |
+| `raw_json` | TEXT | Raw ad JSON (có `body`) |
+| `deleted_at` | TEXT NULL | Soft delete |
 
-## 8) Chạy dự án local
+### 5.4 `api_keys`
+
+| Cột | Kiểu | Mô tả |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `provider` | TEXT | `gemini` / `deepseek` / `qwen` / `openrouter` |
+| `api_key` | TEXT | Key (lưu plain text — MVP) |
+| `label` | TEXT | Nhãn tùy chọn |
+| `priority` | INTEGER | Thứ tự trong provider |
+| `requests_today` | INTEGER | Số request trong ngày |
+| `last_reset` | TEXT | Ngày reset counter |
+| `last_error` | TEXT | Lỗi gần nhất |
+| `status` | TEXT | `active` / `error` |
+| `created_at` | TEXT | |
+
+### 5.5 `settings`
+
+Key-value (vd: `timezone_vn_migrated`).
+
+---
+
+## 6. Module lõi
+
+### 6.1 Scraper — `src/lib/scraper.ts`
+
+- API: `https://gateway.chotot.com/v1/public/ad-listing?cg=<id>&limit=20&o=0&st=s,k`
+- Normalize image URL (giữ nguyên nếu đã là `https://`).
+- Gọi `insertProduct()` — chỉ insert nếu `chotot_id` chưa có trong `seen_products`.
+- Log console: category, URL, số tin mới / skipped.
+
+### 6.2 Price checker — `src/lib/price-checker.ts`
+
+**Prompt (ý chính):**
+
+> Máy cũ này thị trường giá nhiêu, nếu mua đi bán lại thì giá hợp lý để mua là nhiêu, cho biết độ chênh lệch giá thấp nhất thị trường rồi khuyến nghị nên mua không.  
+> Dưới đây là thông tin người bán ghi:  
+> `title: ...`  
+> `content: ...` (body mô tả)
+
+Yêu cầu AI trả JSON: `min`, `max`, `average`, `recommended_buy_price`, `min_gap_percent`, `should_buy`, `summary`, `sources`.
+
+**Fallback chain:**
+
+1. Gemini (`gemini-2.5-flash` + `googleSearch`)
+2. DeepSeek (`deepseek-chat`) + scrape TGDD hỗ trợ
+3. Qwen (`qwen-turbo`) + scrape hỗ trợ
+4. OpenRouter (`openrouter/free`) + scrape hỗ trợ
+5. Scrape thuần (cheerio parse giá)
+
+**Công thức margin hiện dùng:**
+
+```text
+profit_margin = ((market_price - chotot_price) / market_price) * 100
+```
+
+### 6.3 Dashboard — `src/components/dashboard.tsx`
+
+Tabs:
+
+1. **Sản phẩm** — search, filter category, sort, pagination (page size 10), xóa → trash.
+2. **Thùng rác** — khôi phục / xóa vĩnh viễn / xóa hết.
+3. **Danh mục** — bật/tắt / thêm category.
+4. **API Keys** — thêm / xóa / reset status.
+
+SSR: tắt (`dynamic(..., { ssr: false })`) để tránh hydration mismatch do browser extension.
+
+---
+
+## 7. API reference
+
+### `POST /api/scrape`
+
+Quét tất cả category enabled + định giá tối đa 5 sản phẩm chưa check (ưu tiên mới nhất).
+
+Response:
+
+```json
+{
+  "success": true,
+  "newProducts": 12,
+  "byCategory": { "Điện thoại": 5, "Laptop": 7 },
+  "priceChecked": 3
+}
+```
+
+### `GET /api/products`
+
+Query:
+
+| Param | Mặc định | Mô tả |
+|---|---|---|
+| `page` | `1` | Trang |
+| `pageSize` | `10` | Số item / trang |
+| `category` | — | Lọc danh mục |
+| `q` | — | Search title / chotot_id |
+| `sortBy` | `created_at` | `created_at` / `profit_margin` / `price` |
+| `trash` | — | `1` = lấy thùng rác |
+
+Response:
+
+```json
+{
+  "items": [...],
+  "total": 42,
+  "page": 1,
+  "pageSize": 10,
+  "totalPages": 5
+}
+```
+
+### `POST /api/products`
+
+Actions:
+
+| action | Body | Mô tả |
+|---|---|---|
+| `soft-delete` | `{ id }` | Đưa vào thùng rác |
+| `restore` | `{ id }` | Khôi phục |
+| `hard-delete` | `{ id }` | Xóa vĩnh viễn 1 item |
+| `empty-trash` | `{}` | Xóa hết thùng rác |
+
+### `GET/POST /api/categories`
+
+- `GET`: danh sách categories
+- `POST action=toggle`: `{ id, enabled }`
+- `POST action=add`: `{ name, chotot_category_id }`
+
+### `GET/POST /api/api-keys`
+
+- `GET`: danh sách key đã mask
+- `POST action=add`: `{ provider, api_key, label? }`
+- `POST action=delete`: `{ id }`
+- `POST action=reset`: `{ id }`
+
+### `POST /api/cron`
+
+| action | Body | Mô tả |
+|---|---|---|
+| `start` | `{ intervalMinutes? }` | Bắt đầu cron (mặc định 10 phút) |
+| `stop` | `{}` | Dừng |
+| `status` | `{}` | Trạng thái |
+
+> Cron dùng `setInterval` in-memory — mất khi restart process.
+
+---
+
+## 8. Chạy local
 
 ```bash
 npm install
 npm run dev
 ```
 
-Mở: `http://localhost:3000`
+Mở: [http://localhost:3000](http://localhost:3000)
 
-## 9) Cách sử dụng nhanh
+Build production:
 
-1. Vào tab **API Keys** -> thêm key cho 1 hoặc nhiều provider.
-2. Vào tab **Danh mục** -> bật/tắt hoặc thêm category id Chợ Tốt.
-3. Vào tab **Sản phẩm** -> bấm **Quét sản phẩm mới**.
-4. Theo dõi cột:
-   - Giá Chợ Tốt
-   - Giá thị trường
-   - Chênh lệch %
+```bash
+npm run build
+npm start
+```
 
-## 10) Ghi chú hiện trạng
+### Checklist dùng nhanh
 
-- Dự án đang ở mức MVP, phù hợp test nhanh luồng scrape + định giá.
-- `cron` hiện chạy trong memory của process Next.js (`setInterval`), nếu restart server thì lịch chạy sẽ mất.
-- Một số selector scrape fallback có thể cần chỉnh theo thay đổi giao diện website nguồn.
-- Có thể nâng cấp tiếp:
-  - mã hóa API key trước khi lưu DB
-  - retry/backoff tinh vi hơn theo từng provider
-  - bổ sung log/audit chi tiết cho từng lần check giá
-  - thêm cảnh báo theo ngưỡng lợi nhuận (Telegram/Zalo/Email).
+1. Tab **API Keys** → thêm ít nhất 1 key (ưu tiên Gemini).
+2. Tab **Danh mục** → bật danh mục cần theo dõi.
+3. Tab **Sản phẩm** → **Quét sản phẩm mới**.
+4. Xem cột giá thị trường / % chênh lệch / log terminal.
+
+---
+
+## 9. Logging
+
+Prefix console để debug:
+
+| Prefix | Nguồn |
+|---|---|
+| `[SCRAPER]` | Quét category / URL / tin mới |
+| `[PRICE]` | Provider AI / scrape fallback |
+| `[API]` | `/api/scrape` |
+| `[CRON]` | Job định kỳ |
+
+---
+
+## 10. Quyết định kỹ thuật quan trọng
+
+| Quyết định | Lý do |
+|---|---|
+| SQLite local | Đơn giản, đủ cho MVP 1 máy |
+| `seen_products` tách khỏi `products` | Không quét lại sau hard delete |
+| Soft delete | Có thể khôi phục nhầm |
+| Client-only dashboard | Tránh hydration lỗi do extension |
+| Multi-provider fallback | Giảm phụ thuộc 1 API |
+| Prompt kèm title + body | Phân tích tình trạng máy cũ (trầy, lỗi, ...) |
+| Giờ VN (`localtime` +07) | Hiển thị thời gian đúng người dùng VN |
+
+---
+
+## 11. Rủi ro & hạn chế
+
+- Chợ Tốt / TGDD đổi HTML hoặc rate-limit → scrape có thể fail.
+- Gemini grounding có thể cần billing tier phù hợp.
+- API key lưu plain text trong SQLite.
+- Cron không bền vững qua restart.
+- Margin hiện tại dựa trên `average` từ AI; các field `should_buy` / `summary` chưa hiển thị đầy đủ trên UI.
+
+---
+
+## 12. Hướng phát triển tiếp
+
+1. Hiển thị `should_buy`, `summary`, `recommended_buy_price` trên UI.
+2. Mã hóa API key at-rest.
+3. Cron ngoài process (node-cron script / Windows Task Scheduler / Docker).
+4. Thông báo deal tốt (Telegram).
+5. Filter theo ngưỡng % lời tối thiểu.
+6. Test tự động cho scraper + price-checker parser.
+7. Deploy (VPS) với backup `data.db`.
+
+---
+
+## 13. Changelog kỹ thuật ngắn
+
+- Scrape Chợ Tốt + định giá AI multi-provider.
+- Soft/hard delete + empty trash.
+- `seen_products` chống quét lại.
+- Phân trang server + search.
+- Timezone VN.
+- Prompt định giá kèm title + nội dung người bán.
+- Log console chi tiết khi scrape / check giá.
