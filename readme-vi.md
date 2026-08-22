@@ -1,7 +1,5 @@
 # Chotot Deal Finder — Dev Spec (Tiếng Việt)
 
-Tài liệu đặc tả kỹ thuật cho dự án `olddevice-chotot`: web app quét tin Chợ Tốt, ước lượng giá thị trường bằng AI, hỗ trợ quyết định mua đi bán lại.
-
 > Bản tiếng Anh: [`README.md`](./README.md)
 
 ---

@@ -1,7 +1,5 @@
 # Chotot Deal Finder — Developer Spec
 
-Technical specification for `olddevice-chotot`: a web app that scrapes Chợ Tốt listings, estimates market prices with AI, and helps decide whether a used device is worth flipping.
-
 > Vietnamese version: [`readme-vi.md`](./readme-vi.md)
 
 ---

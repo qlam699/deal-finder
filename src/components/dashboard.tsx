@@ -311,9 +311,9 @@ export default function Dashboard() {
       <Tabs defaultValue="products">
         <TabsList>
           <TabsTrigger value="products">Sản phẩm</TabsTrigger>
-          <TabsTrigger value="trash">Thùng rác ({deletedTotal})</TabsTrigger>
           <TabsTrigger value="categories">Danh mục</TabsTrigger>
           <TabsTrigger value="api-keys">API Keys</TabsTrigger>
+          <TabsTrigger value="trash">Thùng rác ({deletedTotal})</TabsTrigger>
         </TabsList>
 
         {/* Products Tab */}
