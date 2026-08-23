@@ -40,6 +40,7 @@ function initSchema() {
       image TEXT,
       url TEXT,
       market_price INTEGER,
+      deal_price INTEGER,
       profit_margin REAL,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       checked INTEGER NOT NULL DEFAULT 0,
@@ -82,6 +83,22 @@ function initSchema() {
   } catch {
     // Column already exists.
   }
+  try {
+    d.exec("ALTER TABLE products ADD COLUMN deal_price INTEGER");
+  } catch {
+    // Column already exists.
+  }
+  // Older / wrong deal rows: deal phải ≤ giá Chợ Tốt (listing).
+  d.exec(`
+    UPDATE products
+    SET deal_price = CASE
+      WHEN market_price IS NULL OR market_price <= 0 THEN NULL
+      WHEN price <= 0 THEN NULL
+      ELSE MIN(price, CAST(ROUND(market_price * 0.9) AS INTEGER))
+    END
+    WHERE market_price IS NOT NULL
+      AND (deal_price IS NULL OR deal_price > price)
+  `);
 
   // Backfill content from raw_json.body for older rows.
   const missingContent = d
@@ -193,6 +210,12 @@ export function getProductsByIds(ids: number[]) {
     .all(...ids);
 }
 
+export function getProductById(id: number) {
+  return getDb()
+    .prepare("SELECT * FROM products WHERE id = ? AND deleted_at IS NULL")
+    .get(id);
+}
+
 export function getUncheckedProducts(limit = 5) {
   return getDb()
     .prepare(
@@ -201,8 +224,17 @@ export function getUncheckedProducts(limit = 5) {
     .all(limit);
 }
 
-export function updateProductPrice(id: number, marketPrice: number, profitMargin: number) {
-  getDb().prepare("UPDATE products SET market_price = ?, profit_margin = ?, checked = 1 WHERE id = ?").run(marketPrice, profitMargin, id);
+export function updateProductPrice(
+  id: number,
+  marketPrice: number,
+  dealPrice: number,
+  profitMargin: number,
+) {
+  getDb()
+    .prepare(
+      "UPDATE products SET market_price = ?, deal_price = ?, profit_margin = ?, checked = 1 WHERE id = ?",
+    )
+    .run(marketPrice, dealPrice, profitMargin, id);
 }
 
 export function getProducts(opts: {
@@ -312,14 +344,14 @@ export function addCategory(name: string, chotot_category_id: string) {
 
 // API Key helpers
 export function getApiKeys() {
-  return getDb().prepare("SELECT * FROM api_keys ORDER BY provider, priority ASC").all();
+  return getDb().prepare("SELECT * FROM api_keys ORDER BY priority ASC, id ASC").all();
 }
 
 export function getActiveKeyForProvider(provider: string) {
   const d = getDb();
   refreshDailyKeyCounters(d);
   return d.prepare(
-    "SELECT * FROM api_keys WHERE provider = ? AND status = 'active' ORDER BY priority ASC LIMIT 1"
+    "SELECT * FROM api_keys WHERE provider = ? AND status = 'active' ORDER BY priority ASC, id ASC LIMIT 1"
   ).get(provider);
 }
 
@@ -327,7 +359,7 @@ export function getNextAvailableKey() {
   const d = getDb();
   refreshDailyKeyCounters(d);
   return d.prepare(
-    "SELECT * FROM api_keys WHERE status = 'active' ORDER BY priority ASC"
+    "SELECT * FROM api_keys WHERE status = 'active' ORDER BY priority ASC, id ASC"
   ).all();
 }
 
@@ -383,8 +415,24 @@ export function markKeyExhaustedToday(id: number, error: string) {
 
 export function addApiKey(provider: string, apiKey: string, label?: string) {
   const d = getDb();
-  const maxPriority = d.prepare("SELECT COALESCE(MAX(priority), 0) as m FROM api_keys WHERE provider = ?").get(provider) as { m: number };
-  return d.prepare("INSERT INTO api_keys (provider, api_key, label, priority) VALUES (?, ?, ?, ?)").run(provider, apiKey, label || null, maxPriority.m + 1);
+  const maxPriority = d.prepare("SELECT COALESCE(MAX(priority), 0) as m FROM api_keys").get() as {
+    m: number;
+  };
+  return d
+    .prepare("INSERT INTO api_keys (provider, api_key, label, priority) VALUES (?, ?, ?, ?)")
+    .run(provider, apiKey, label || null, maxPriority.m + 1);
+}
+
+/** Persist list order: first id = highest priority (runs first). */
+export function reorderApiKeys(orderedIds: number[]) {
+  const d = getDb();
+  const update = d.prepare("UPDATE api_keys SET priority = ? WHERE id = ?");
+  const tx = d.transaction((ids: number[]) => {
+    ids.forEach((id, index) => {
+      update.run(index + 1, id);
+    });
+  });
+  tx(orderedIds);
 }
 
 export function deleteApiKey(id: number) {

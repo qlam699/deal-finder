@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { GripVertical } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,7 @@ interface Product {
   url: string;
   content?: string | null;
   market_price: number | null;
+  deal_price: number | null;
   profit_margin: number | null;
   created_at: string;
   listed_at?: number | null;
@@ -138,6 +140,15 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [newProvider, setNewProvider] = useState("gemini");
   const [addingKey, setAddingKey] = useState(false);
+  const [checkingPriceIds, setCheckingPriceIds] = useState<number[]>([]);
+  const [reorderingKeys, setReorderingKeys] = useState(false);
+  const dragKeyIndex = useRef<number | null>(null);
+  const apiKeysOrderRef = useRef<ApiKey[]>([]);
+  const priceCheckErrorsShown = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    apiKeysOrderRef.current = apiKeys;
+  }, [apiKeys]);
 
   const fetchProducts = useCallback(async () => {
     const params = new URLSearchParams({
@@ -166,10 +177,10 @@ export default function Dashboard() {
     setCategories(await res.json());
   };
 
-  const fetchApiKeys = async () => {
+  const fetchApiKeys = useCallback(async () => {
     const res = await fetch("/api/api-keys");
     setApiKeys(await res.json());
-  };
+  }, []);
 
   const fetchJobStatus = useCallback(async () => {
     const res = await fetch("/api/scrape");
@@ -188,12 +199,18 @@ export default function Dashboard() {
     } else if (data.lastError) {
       setJobMessage(`Lỗi lần quét trước: ${data.lastError}`);
     }
-    return data;
+    return data as {
+      running?: boolean;
+      cronRunning?: boolean;
+      lastError?: string | null;
+      lastResult?: { newProducts: number; priceChecked: number } | null;
+      intervalMinutes?: number | null;
+    };
   }, []);
 
   const refreshListAjax = useCallback(async () => {
     await Promise.all([fetchProducts(), fetchDeletedProducts(), fetchApiKeys()]);
-  }, [fetchProducts, fetchDeletedProducts]);
+  }, [fetchProducts, fetchDeletedProducts, fetchApiKeys]);
 
   useEffect(() => {
     fetchProducts();
@@ -201,7 +218,15 @@ export default function Dashboard() {
     fetchCategories();
     fetchApiKeys();
     fetchJobStatus();
-  }, [fetchProducts, fetchDeletedProducts, fetchJobStatus]);
+    void fetch("/api/products/check-price")
+      .then((r) => r.json())
+      .then((data: { pendingIds?: number[] }) => {
+        if (Array.isArray(data?.pendingIds) && data.pendingIds.length > 0) {
+          setCheckingPriceIds(data.pendingIds);
+        }
+      })
+      .catch(() => {});
+  }, [fetchProducts, fetchDeletedProducts, fetchApiKeys, fetchJobStatus]);
 
   // While job/cron is active: poll status + refresh product list via AJAX.
   useEffect(() => {
@@ -212,16 +237,19 @@ export default function Dashboard() {
 
     const tick = async () => {
       const data = await fetchJobStatus();
-      if (cancelled) return;
-      // Refresh list while scanning so new rows appear without F5.
-      await fetchProducts();
-      if (cancelled) return;
-
-      if (wasRunning && !data.running) {
-        // Job just finished — final refresh including trash + keys.
-        await refreshListAjax();
-      }
+      const justFinished = wasRunning && !data.running;
       wasRunning = !!data.running;
+
+      // Job vừa xong: luôn refresh (kể cả khi effect cleanup vì scraping=false),
+      // để cập nhật products + requests_today của API keys không cần F5.
+      if (justFinished) {
+        await refreshListAjax();
+        return;
+      }
+
+      if (cancelled) return;
+      // Đang chạy: cập nhật list sản phẩm + usage API keys.
+      await Promise.all([fetchProducts(), fetchApiKeys()]);
     };
 
     void tick();
@@ -233,7 +261,7 @@ export default function Dashboard() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [scraping, cronRunning, fetchJobStatus, fetchProducts, refreshListAjax]);
+  }, [scraping, cronRunning, fetchJobStatus, fetchProducts, fetchApiKeys, refreshListAjax]);
 
   useEffect(() => {
     setProductsPage(1);
@@ -342,6 +370,98 @@ export default function Dashboard() {
     fetchApiKeys();
   };
 
+  const persistApiKeyOrder = async (ordered: ApiKey[]) => {
+    setReorderingKeys(true);
+    try {
+      const res = await fetch("/api/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reorder",
+          orderedIds: ordered.map((k) => k.id),
+        }),
+      });
+      if (!res.ok) throw new Error("Không lưu được thứ tự");
+      await fetchApiKeys();
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Lưu thứ tự thất bại");
+      await fetchApiKeys();
+    } finally {
+      setReorderingKeys(false);
+    }
+  };
+
+  const handleKeyDragStart = (index: number) => {
+    dragKeyIndex.current = index;
+  };
+
+  const handleKeyDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    const from = dragKeyIndex.current;
+    if (from === null || from === index) return;
+    setApiKeys((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(index, 0, moved);
+      dragKeyIndex.current = index;
+      apiKeysOrderRef.current = next;
+      return next;
+    });
+  };
+
+  const handleKeyDrop = async () => {
+    dragKeyIndex.current = null;
+    await persistApiKeyOrder(apiKeysOrderRef.current);
+  };
+
+  const handleKeyDragEnd = () => {
+    dragKeyIndex.current = null;
+  };
+
+  // Poll while background "Tìm hiểu" jobs are running.
+  useEffect(() => {
+    if (checkingPriceIds.length === 0) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      const [statusRes] = await Promise.all([
+        fetch("/api/products/check-price"),
+        fetchProducts(),
+        fetchApiKeys(),
+      ]);
+      if (cancelled) return;
+
+      const status = (await statusRes.json().catch(() => null)) as {
+        pendingIds?: number[];
+        errors?: Record<string, string>;
+      } | null;
+
+      const pending = status?.pendingIds || [];
+      setCheckingPriceIds(pending);
+
+      const errors = status?.errors || {};
+      for (const [idStr, msg] of Object.entries(errors)) {
+        const id = Number(idStr);
+        if (!priceCheckErrorsShown.current.has(id)) {
+          priceCheckErrorsShown.current.add(id);
+          alert(msg);
+        }
+      }
+    };
+
+    void tick();
+    const timer = setInterval(() => {
+      void tick();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [checkingPriceIds.length, fetchProducts, fetchApiKeys]);
+
   const handleMoveToTrash = async (id: number) => {
     await fetch("/api/products", {
       method: "POST",
@@ -350,6 +470,30 @@ export default function Dashboard() {
     });
     await fetchProducts();
     await fetchDeletedProducts();
+  };
+
+  const handleCheckPrice = async (id: number) => {
+    if (checkingPriceIds.includes(id)) return;
+    priceCheckErrorsShown.current.delete(id);
+    setCheckingPriceIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    try {
+      const res = await fetch("/api/products/check-price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setCheckingPriceIds((prev) => prev.filter((x) => x !== id));
+        throw new Error(data?.error || "Không bắt đầu được tìm hiểu");
+      }
+      if (Array.isArray(data?.pendingIds)) {
+        setCheckingPriceIds(data.pendingIds);
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Tìm hiểu thất bại. Thử lại.");
+    }
   };
 
   const handleRestoreProduct = async (id: number) => {
@@ -478,7 +622,8 @@ export default function Dashboard() {
                   <TableHead>Danh mục</TableHead>
                   <TableHead>Thời gian</TableHead>
                   <TableHead className="text-right">Giá Chợ Tốt</TableHead>
-                  <TableHead className="text-right">Giá thị trường</TableHead>
+                  <TableHead className="text-right">Giá deal mua (AI)</TableHead>
+                  <TableHead className="text-right">Giá thị trường (bán)(AI)</TableHead>
                   <TableHead className="text-right">Chênh lệch</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -486,14 +631,17 @@ export default function Dashboard() {
               <TableBody>
                 {products.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       {search
                         ? `Không tìm thấy sản phẩm cho "${search}".`
                         : "Chưa có sản phẩm. Nhấn \"Quét sản phẩm mới\" để bắt đầu."}
                     </TableCell>
                   </TableRow>
                 )}
-                {products.map((p) => (
+                {products.map((p) => {
+                  const needsAiPrice = !p.market_price || !p.deal_price;
+                  const isChecking = checkingPriceIds.includes(p.id);
+                  return (
                   <TableRow key={p.id} className={p.profit_margin && p.profit_margin > 20 ? "bg-green-50 dark:bg-green-950" : ""}>
                     <TableCell>
                       {p.image && (
@@ -522,7 +670,45 @@ export default function Dashboard() {
                     </TableCell>
                     <TableCell className="text-right font-mono">{formatPrice(p.price)}</TableCell>
                     <TableCell className="text-right font-mono">
-                      {p.market_price ? formatPrice(p.market_price) : <span className="text-muted-foreground">—</span>}
+                      {p.deal_price ? (
+                        <span
+                          className={
+                            p.deal_price < p.price
+                              ? "text-green-700 dark:text-green-400 font-semibold"
+                              : undefined
+                          }
+                          title="Giá nên thương lượng mua vào (≤ giá Chợ Tốt)"
+                        >
+                          {formatPrice(p.deal_price)}
+                        </span>
+                      ) : needsAiPrice ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isChecking}
+                          onClick={() => void handleCheckPrice(p.id)}
+                        >
+                          {isChecking ? "Đang tìm…" : "Tìm hiểu"}
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {p.market_price ? (
+                        formatPrice(p.market_price)
+                      ) : needsAiPrice && p.deal_price ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isChecking}
+                          onClick={() => void handleCheckPrice(p.id)}
+                        >
+                          {isChecking ? "Đang tìm…" : "Tìm hiểu"}
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground">{isChecking ? "…" : "—"}</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       {p.profit_margin != null ? (
@@ -530,7 +716,7 @@ export default function Dashboard() {
                           {p.profit_margin > 0 ? "+" : ""}{p.profit_margin}%
                         </Badge>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-muted-foreground">{isChecking ? "…" : "—"}</span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -548,7 +734,8 @@ export default function Dashboard() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -744,7 +931,9 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
-                Thứ tự ưu tiên: Gemini (grounding) → Groq (qwen/qwen3.6-27b) → Cloudflare Workers AI → Qwen → OpenRouter → Scrape thuần
+                Kéo thả để xếp thứ tự ưu tiên (trên → dưới = chạy trước → sau). Key inactive/hết quota bị bỏ qua.
+                Cuối cùng vẫn fallback scrape thuần nếu mọi AI thất bại.
+                {reorderingKeys ? " Đang lưu thứ tự…" : ""}
               </p>
 
               <form onSubmit={handleAddApiKey} className="flex gap-2 mb-6">
@@ -787,6 +976,8 @@ export default function Dashboard() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10"></TableHead>
+                    <TableHead className="w-12">#</TableHead>
                     <TableHead>Provider</TableHead>
                     <TableHead>Key</TableHead>
                     <TableHead>Nhãn</TableHead>
@@ -796,8 +987,26 @@ export default function Dashboard() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {apiKeys.map((k) => (
-                    <TableRow key={k.id}>
+                  {apiKeys.map((k, index) => (
+                    <TableRow
+                      key={k.id}
+                      onDragOver={(e) => handleKeyDragOver(e, index)}
+                      onDrop={() => void handleKeyDrop()}
+                      className={reorderingKeys ? "opacity-70" : undefined}
+                    >
+                      <TableCell className="text-muted-foreground">
+                        <button
+                          type="button"
+                          draggable={!reorderingKeys}
+                          onDragStart={() => handleKeyDragStart(index)}
+                          onDragEnd={handleKeyDragEnd}
+                          className="cursor-grab active:cursor-grabbing touch-none p-1 -m-1 rounded hover:bg-muted"
+                          aria-label="Kéo để đổi thứ tự"
+                        >
+                          <GripVertical className="size-4" aria-hidden />
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground tabular-nums">{index + 1}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{k.provider}</Badge>
                       </TableCell>
@@ -834,7 +1043,7 @@ export default function Dashboard() {
                   ))}
                   {apiKeys.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-4 text-muted-foreground">
                         Chưa có API key nào. Thêm key để bắt đầu tra giá tự động.
                       </TableCell>
                     </TableRow>

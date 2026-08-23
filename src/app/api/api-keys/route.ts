@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getApiKeys, addApiKey, deleteApiKey, resetKeyStatus } from "@/lib/db";
+import { getApiKeys, addApiKey, deleteApiKey, resetKeyStatus, reorderApiKeys } from "@/lib/db";
 
 export async function GET() {
   const keys = getApiKeys() as { id: number; provider: string; api_key: string; label: string; priority: number; requests_today: number; last_error: string; status: string; created_at: string }[];
@@ -41,6 +41,15 @@ export async function POST(request: NextRequest) {
 
   if (body.action === "reset") {
     resetKeyStatus(body.id);
+    return NextResponse.json({ success: true });
+  }
+
+  if (body.action === "reorder") {
+    const orderedIds = body.orderedIds as unknown;
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0 || !orderedIds.every((id) => Number.isInteger(id))) {
+      return NextResponse.json({ error: "orderedIds must be a non-empty array of integers" }, { status: 400 });
+    }
+    reorderApiKeys(orderedIds as number[]);
     return NextResponse.json({ success: true });
   }
 

@@ -18,7 +18,7 @@
 
 - Local Next.js + SQLite app.
 - Scrape Chợ Tốt via public gateway API.
-- Pricing chain: Gemini → Groq (`qwen/qwen3.6-27b`) → Cloudflare Workers AI → Qwen → OpenRouter → pure scrape.
+- Pricing chain: ordered by API key list (drag-and-drop on API Keys tab); scrape-only last.
 - Soft delete / hard delete / empty trash.
 - Persistent `seen_products` history so previously seen ads are never re-ingested (even after permanent delete).
 - Server-side pagination and search by title / listing ID.
@@ -73,7 +73,7 @@ scraper.ts   price-checker.ts
 3. New ads (not present in `seen_products`) are inserted into `products`.
 4. Fetch unchecked products (`checked = 0`), newest `listed_at` first.
 5. `checkPrice(title + body)` runs the AI fallback chain.
-6. Update `market_price`, `profit_margin`, `checked = 1`.
+6. Update `market_price` (sell/avg), `deal_price` (recommended buy), `profit_margin`, `checked = 1`.
 7. UI renders the table with price gap %.
 
 ---
@@ -143,8 +143,9 @@ Default seed: Phones (`5010`), Laptops (`5020`), Tablets (`5030`).
 | `category` | TEXT | Category name |
 | `image` | TEXT | Image URL |
 | `url` | TEXT | Listing URL |
-| `market_price` | INTEGER | Estimated market price |
-| `profit_margin` | REAL | Gap % |
+| `market_price` | INTEGER | Avg market = suggested sell price |
+| `deal_price` | INTEGER | Suggested max buy-in for flip |
+| `profit_margin` | REAL | Gap % vs market (sell) |
 | `created_at` | TEXT | DB insert time (VN local) |
 | `checked` | INTEGER | 0 = not priced / 1 = priced |
 | `raw_json` | TEXT | Raw ad JSON (includes `body`) |
@@ -158,7 +159,7 @@ Default seed: Phones (`5010`), Laptops (`5020`), Tablets (`5030`).
 | `provider` | TEXT | `gemini` / `groq` / `cloudflare` / `qwen` / `openrouter` |
 | `api_key` | TEXT | Key (plain text). Cloudflare: `ACCOUNT_ID\|API_TOKEN` |
 | `label` | TEXT | Optional label |
-| `priority` | INTEGER | Order within provider |
+| `priority` | INTEGER | Global run order (1 = first). Drag-reorder on API Keys tab |
 | `requests_today` | INTEGER | Daily request counter |
 | `last_reset` | TEXT | Counter reset date |
 | `last_error` | TEXT | Last error |
@@ -189,16 +190,11 @@ Key-value store (e.g. `timezone_vn_migrated`).
 > `title: ...`  
 > `content: ...` (listing body)
 
-Expected JSON fields: `min`, `max`, `average`, `recommended_buy_price`, `min_gap_percent`, `should_buy`, `summary`, `sources`.
+Expected JSON: `average` → `market_price` (sell), `recommended_buy_price` → `deal_price` (buy-in). Same `PRICE_PROMPT` for all AI providers.
 
-**Fallback chain:**
+**Fallback chain:** ordered by each API key’s `priority` (list top → bottom on the API Keys tab). Scrape-only remains the last resort after all active keys fail.
 
-1. Gemini (`gemini-2.5-flash` + `googleSearch`)
-2. Groq (`qwen/qwen3.6-27b`) + helper scrape
-3. Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`) + helper scrape — key format `ACCOUNT_ID|API_TOKEN`
-4. Qwen (`qwen-turbo`) + helper scrape
-5. OpenRouter (`openrouter/free`) + helper scrape
-6. Pure scrape via cheerio
+Supported providers per key: Gemini (`gemini-2.5-flash` + `googleSearch`), Groq (`qwen/qwen3.6-27b`), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini calls use helper scrape first.
 
 **Margin formula currently used:**
 
@@ -355,13 +351,13 @@ Console prefixes:
 - Gemini grounding may require an eligible billing tier.
 - API keys are stored as plain text in SQLite.
 - Cron is not durable across restarts.
-- UI currently focuses on `average` / margin; richer AI fields (`should_buy`, `summary`) are not fully surfaced yet.
+- UI shows deal buy + market sell; richer AI fields (`should_buy`, `summary`) are not fully surfaced yet.
 
 ---
 
 ## 12. Suggested next steps
 
-1. Show `should_buy`, `summary`, and `recommended_buy_price` in the UI.
+1. Show `should_buy` and `summary` in the UI.
 2. Encrypt API keys at rest.
 3. Move cron outside Next.js (standalone script / scheduler / Docker).
 4. Add deal alerts (Telegram).

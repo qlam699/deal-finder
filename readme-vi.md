@@ -18,7 +18,7 @@
 
 - Chạy local với Next.js + SQLite.
 - Scrape Chợ Tốt qua public gateway API.
-- Định giá: Gemini → Groq (`qwen/qwen3.6-27b`) → Cloudflare Workers AI → Qwen → OpenRouter → scrape thuần.
+- Định giá: theo thứ tự danh sách API key (kéo thả trên tab API Keys); scrape thuần là bước cuối.
 - Soft delete / hard delete / empty trash.
 - Lịch sử `seen_products` để không quét lại tin đã từng thấy (kể cả sau khi xóa vĩnh viễn).
 - Phân trang server-side, tìm kiếm theo title / mã tin.
@@ -73,7 +73,7 @@ scraper.ts   price-checker.ts
 3. Tin mới (chưa có trong `seen_products`) được insert vào `products`.
 4. Lấy batch sản phẩm `checked = 0`, ưu tiên `listed_at` mới nhất.
 5. `checkPrice(title + body)` chạy fallback chain AI.
-6. Cập nhật `market_price`, `profit_margin`, `checked = 1`.
+6. Cập nhật `market_price` (bán ra), `deal_price` (nên mua), `profit_margin`, `checked = 1`.
 7. UI hiển thị bảng + % chênh lệch.
 
 ---
@@ -143,8 +143,9 @@ Seed mặc định: Điện thoại (`5010`), Laptop (`5020`), Máy tính bảng
 | `category` | TEXT | Tên danh mục |
 | `image` | TEXT | URL ảnh |
 | `url` | TEXT | Link tin |
-| `market_price` | INTEGER | Giá thị trường ước lượng |
-| `profit_margin` | REAL | % chênh lệch |
+| `market_price` | INTEGER | TB thị trường = giá nên bán ra |
+| `deal_price` | INTEGER | Giá nên deal mua vào để lướt |
+| `profit_margin` | REAL | % chênh vs giá bán (market) |
 | `created_at` | TEXT | Thời điểm lưu DB (local VN) |
 | `checked` | INTEGER | 0 chưa định giá / 1 đã định giá |
 | `raw_json` | TEXT | Raw ad JSON (có `body`) |
@@ -158,7 +159,7 @@ Seed mặc định: Điện thoại (`5010`), Laptop (`5020`), Máy tính bảng
 | `provider` | TEXT | `gemini` / `groq` / `cloudflare` / `qwen` / `openrouter` |
 | `api_key` | TEXT | Key (plain text). Cloudflare: `ACCOUNT_ID\|API_TOKEN` |
 | `label` | TEXT | Nhãn tùy chọn |
-| `priority` | INTEGER | Thứ tự trong provider |
+| `priority` | INTEGER | Thứ tự chạy toàn cục (1 = trước). Kéo thả trên tab API Keys |
 | `requests_today` | INTEGER | Số request trong ngày |
 | `last_reset` | TEXT | Ngày reset counter |
 | `last_error` | TEXT | Lỗi gần nhất |
@@ -189,16 +190,11 @@ Key-value (vd: `timezone_vn_migrated`).
 > `title: ...`  
 > `content: ...` (body mô tả)
 
-Yêu cầu AI trả JSON: `min`, `max`, `average`, `recommended_buy_price`, `min_gap_percent`, `should_buy`, `summary`, `sources`.
+AI trả JSON: `average` → `market_price` (bán), `recommended_buy_price` → `deal_price` (mua). Cùng một `PRICE_PROMPT` cho mọi AI provider.
 
-**Fallback chain:**
+**Fallback chain:** theo `priority` của từng API key (trên → dưới ở tab API Keys). Scrape thuần là bước cuối nếu mọi key active thất bại.
 
-1. Gemini (`gemini-2.5-flash` + `googleSearch`)
-2. Groq (`qwen/qwen3.6-27b`) + scrape TGDD hỗ trợ
-3. Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`) + scrape hỗ trợ — key dạng `ACCOUNT_ID|API_TOKEN`
-4. Qwen (`qwen-turbo`) + scrape hỗ trợ
-5. OpenRouter (`openrouter/free`) + scrape hỗ trợ
-6. Scrape thuần (cheerio parse giá)
+Provider hỗ trợ: Gemini (`gemini-2.5-flash` + `googleSearch`), Groq (`qwen/qwen3.6-27b`), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini có scrape TGDD hỗ trợ trước khi gọi.
 
 **Công thức margin hiện dùng:**
 
@@ -355,13 +351,13 @@ Prefix console để debug:
 - Gemini grounding có thể cần billing tier phù hợp.
 - API key lưu plain text trong SQLite.
 - Cron không bền vững qua restart.
-- Margin hiện tại dựa trên `average` từ AI; các field `should_buy` / `summary` chưa hiển thị đầy đủ trên UI.
+- UI đã có giá deal mua + giá thị trường bán; `should_buy` / `summary` chưa hiện đầy đủ.
 
 ---
 
 ## 12. Hướng phát triển tiếp
 
-1. Hiển thị `should_buy`, `summary`, `recommended_buy_price` trên UI.
+1. Hiển thị `should_buy`, `summary` trên UI.
 2. Mã hóa API key at-rest.
 3. Cron ngoài process (node-cron script / Windows Task Scheduler / Docker).
 4. Thông báo deal tốt (Telegram).

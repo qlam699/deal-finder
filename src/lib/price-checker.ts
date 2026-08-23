@@ -10,7 +10,10 @@ import {
 } from "./db";
 
 interface PriceResult {
+  /** Giá bán ra / trung bình thị trường */
   marketPrice: number;
+  /** Giá nên deal mua để lướt có lời */
+  dealPrice: number;
   sources?: string[];
   provider?: string;
 }
@@ -24,28 +27,69 @@ interface ApiKeyRow {
   requests_today: number;
 }
 
-const PRICE_PROMPT = (sellerInfo: string) =>
-  `Máy cũ này thị trường giá nhiêu, nếu mua đi bán lại thì giá hợp lý để mua là nhiêu, cho biết độ chênh lệch giá thấp nhất thị trường rồi khuyến nghị nên mua không.
-Trả lời ngắn gọn.
-Dưới đây là thông tin người bán ghi:
-${sellerInfo}
+/** Shared by every AI provider (Gemini / Groq / Cloudflare / Qwen / OpenRouter). */
+const PRICE_PROMPT = (sellerInfo: string, listingPrice: number) =>
+  `Bạn đang hỗ trợ người mua máy cũ trên Chợ Tốt để LƯỚT (mua vào → bán ra có lời) tại Việt Nam.
 
-Yêu cầu trả về JSON duy nhất (không markdown), theo format:
+Thông tin tin đăng:
+${sellerInfo}
+Giá người bán đang rao trên Chợ Tốt (listing): ${listingPrice} VND
+
+Hãy ước lượng và trả JSON duy nhất (không markdown):
+1) average = giá thị trường trung bình khi BÁN RA (giá hợp lý người mua lẻ trả).
+2) recommended_buy_price = giá DEAL MUA VÀO bạn nên thương lượng với seller.
+
+RÀNG BUỘC BẮT BUỘC cho recommended_buy_price:
+- Phải ≤ giá Chợ Tốt (listing ${listingPrice}). Đây là giá thương lượng mua vào, không phải giá mua tối đa theo thị trường độc lập.
+- Phải thấp hơn average đủ để còn lời hợp lý khi bán lại (không quá đáng với seller).
+- Ví dụ: listing 12.000.000, average (bán ra) 13.000.000 → recommended_buy_price khoảng 11.000.000 (lời ~2.000.000 nếu bán 13tr).
+- Nếu listing đã rất thấp so với average, recommended_buy_price vẫn ≤ listing (có thể gần bằng listing hoặc thấp hơn một chút để chốt deal).
+
+Format:
 {
   "min": <giá thấp nhất thị trường, VND>,
   "max": <giá cao nhất thị trường, VND>,
-  "average": <giá trung bình thị trường, VND>,
-  "recommended_buy_price": <giá đề xuất nên mua để lướt, VND>,
-  "min_gap_percent": <phần trăm chênh lệch giữa giá thấp nhất thị trường và giá đề xuất mua>,
+  "average": <giá TB thị trường = giá nên bán ra, VND>,
+  "recommended_buy_price": <giá deal mua vào ≤ listing, VND>,
+  "min_gap_percent": <phần trăm (average - recommended_buy_price) / average>,
   "should_buy": <true|false>,
   "summary": "<1 câu khuyến nghị ngắn gọn>",
   "sources": ["url1", "url2"]
 }
-Nếu không tìm được dữ liệu đủ tin cậy, trả:
+Nếu không đủ dữ liệu:
 {"min": 0, "max": 0, "average": 0, "recommended_buy_price": 0, "min_gap_percent": 0, "should_buy": false, "summary": "không đủ dữ liệu", "sources": []}`;
 
+/** Clamp deal: luôn ≤ giá Chợ Tốt và (nếu có thể) < giá bán thị trường. */
+function normalizeDealPrice(
+  marketPrice: number,
+  listingPrice: number,
+  suggestedDeal?: number,
+): number {
+  let deal =
+    suggestedDeal != null && Number.isFinite(suggestedDeal) && suggestedDeal > 0
+      ? Math.round(suggestedDeal)
+      : Math.round(Math.min(listingPrice, marketPrice * 0.9));
+
+  // Deal mua ≤ giá đang rao.
+  deal = Math.min(deal, listingPrice);
+
+  // Còn biên so với giá bán ra khi listing chưa thấp hơn market.
+  if (listingPrice >= marketPrice) {
+    deal = Math.min(deal, Math.round(marketPrice * 0.9));
+  } else if (deal >= marketPrice) {
+    deal = Math.min(listingPrice, Math.round(marketPrice * 0.95));
+  }
+
+  if (deal <= 0) deal = Math.min(listingPrice, Math.round(marketPrice * 0.9));
+  return deal;
+}
+
 // Provider implementations
-async function checkWithGemini(apiKey: string, sellerInfo: string): Promise<PriceResult | null> {
+async function checkWithGemini(
+  apiKey: string,
+  sellerInfo: string,
+  listingPrice: number,
+): Promise<PriceResult | null> {
   console.log(`[PRICE] Trying provider=gemini`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
@@ -53,17 +97,22 @@ async function checkWithGemini(apiKey: string, sellerInfo: string): Promise<Pric
     tools: [{ googleSearch: {} } as unknown as import("@google/generative-ai").Tool],
   });
 
-  const result = await model.generateContent(PRICE_PROMPT(sellerInfo));
+  const result = await model.generateContent(PRICE_PROMPT(sellerInfo, listingPrice));
   const text = result.response.text();
-  return parseAIResponse(text);
+  return parseAIResponse(text, listingPrice);
 }
 
-async function checkWithGroq(apiKey: string, sellerInfo: string, scrapedData?: string): Promise<PriceResult | null> {
+async function checkWithGroq(
+  apiKey: string,
+  sellerInfo: string,
+  listingPrice: number,
+  scrapedData?: string,
+): Promise<PriceResult | null> {
   console.log(`[PRICE] Trying provider=groq model=qwen/qwen3.6-27b`);
   const client = new OpenAI({ baseURL: "https://api.groq.com/openai/v1", apiKey });
   const prompt = scrapedData
-    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo)}`
-    : PRICE_PROMPT(sellerInfo);
+    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo, listingPrice)}`
+    : PRICE_PROMPT(sellerInfo, listingPrice);
 
   const response = await client.chat.completions.create({
     model: "qwen/qwen3.6-27b",
@@ -77,19 +126,24 @@ async function checkWithGroq(apiKey: string, sellerInfo: string, scrapedData?: s
   });
 
   const text = response.choices[0]?.message?.content || "";
-  const parsed = parseAIResponse(text);
+  const parsed = parseAIResponse(text, listingPrice);
   if (!parsed) {
     console.warn(`[PRICE] Groq parse failed, raw snippet: ${text.slice(0, 300)}`);
   }
   return parsed;
 }
 
-async function checkWithQwen(apiKey: string, sellerInfo: string, scrapedData?: string): Promise<PriceResult | null> {
+async function checkWithQwen(
+  apiKey: string,
+  sellerInfo: string,
+  listingPrice: number,
+  scrapedData?: string,
+): Promise<PriceResult | null> {
   console.log(`[PRICE] Trying provider=qwen`);
   const client = new OpenAI({ baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", apiKey });
   const prompt = scrapedData
-    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo)}`
-    : PRICE_PROMPT(sellerInfo);
+    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo, listingPrice)}`
+    : PRICE_PROMPT(sellerInfo, listingPrice);
 
   const response = await client.chat.completions.create({
     model: "qwen-turbo",
@@ -97,15 +151,20 @@ async function checkWithQwen(apiKey: string, sellerInfo: string, scrapedData?: s
     temperature: 0.1,
   });
 
-  return parseAIResponse(response.choices[0]?.message?.content || "");
+  return parseAIResponse(response.choices[0]?.message?.content || "", listingPrice);
 }
 
-async function checkWithOpenRouter(apiKey: string, sellerInfo: string, scrapedData?: string): Promise<PriceResult | null> {
+async function checkWithOpenRouter(
+  apiKey: string,
+  sellerInfo: string,
+  listingPrice: number,
+  scrapedData?: string,
+): Promise<PriceResult | null> {
   console.log(`[PRICE] Trying provider=openrouter`);
   const client = new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey });
   const prompt = scrapedData
-    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo)}`
-    : PRICE_PROMPT(sellerInfo);
+    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo, listingPrice)}`
+    : PRICE_PROMPT(sellerInfo, listingPrice);
 
   const response = await client.chat.completions.create({
     model: "openrouter/free",
@@ -113,7 +172,7 @@ async function checkWithOpenRouter(apiKey: string, sellerInfo: string, scrapedDa
     temperature: 0.1,
   });
 
-  return parseAIResponse(response.choices[0]?.message?.content || "");
+  return parseAIResponse(response.choices[0]?.message?.content || "", listingPrice);
 }
 
 /** Format stored in api_keys.api_key: ACCOUNT_ID|API_TOKEN */
@@ -129,6 +188,7 @@ function parseCloudflareCredential(apiKey: string): { accountId: string; token: 
 async function checkWithCloudflare(
   apiKey: string,
   sellerInfo: string,
+  listingPrice: number,
   scrapedData?: string,
 ): Promise<PriceResult | null> {
   const cred = parseCloudflareCredential(apiKey);
@@ -142,8 +202,8 @@ async function checkWithCloudflare(
     baseURL: `https://api.cloudflare.com/client/v4/accounts/${cred.accountId}/ai/v1`,
   });
   const prompt = scrapedData
-    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo)}`
-    : PRICE_PROMPT(sellerInfo);
+    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo, listingPrice)}`
+    : PRICE_PROMPT(sellerInfo, listingPrice);
 
   const response = await client.chat.completions.create({
     model: "@cf/meta/llama-3.1-8b-instruct-fast",
@@ -152,7 +212,7 @@ async function checkWithCloudflare(
   });
 
   const text = response.choices[0]?.message?.content || "";
-  const parsed = parseAIResponse(text);
+  const parsed = parseAIResponse(text, listingPrice);
   if (!parsed) {
     console.warn(`[PRICE] Cloudflare parse failed, raw snippet: ${text.slice(0, 300)}`);
   }
@@ -160,7 +220,10 @@ async function checkWithCloudflare(
 }
 
 // Scrape fallback
-async function scrapeMarketPrice(productName: string): Promise<PriceResult | null> {
+async function scrapeMarketPrice(
+  productName: string,
+  listingPrice: number,
+): Promise<PriceResult | null> {
   try {
     const encoded = encodeURIComponent(productName);
     const url = `https://www.thegioididong.com/tim-kiem?key=${encoded}`;
@@ -185,7 +248,12 @@ async function scrapeMarketPrice(productName: string): Promise<PriceResult | nul
     if (prices.length === 0) return null;
 
     const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
-    return { marketPrice: avg, sources: [url], provider: "scrape" };
+    return {
+      marketPrice: avg,
+      dealPrice: normalizeDealPrice(avg, listingPrice),
+      sources: [url],
+      provider: "scrape",
+    };
   } catch {
     return null;
   }
@@ -219,7 +287,7 @@ export async function scrapeDataForAI(productName: string): Promise<string> {
   }
 }
 
-function parseAIResponse(text: string): PriceResult | null {
+function parseAIResponse(text: string, listingPrice: number): PriceResult | null {
   try {
     // Strip thinking / markdown wrappers from models like Groq Qwen3.6
     let cleaned = text
@@ -242,11 +310,19 @@ function parseAIResponse(text: string): PriceResult | null {
     if (!raw) return null;
 
     const data = JSON.parse(raw);
-    const marketPrice = Number(data.average ?? data.recommended_buy_price ?? 0);
+    const marketPrice = Number(data.average ?? 0);
     if (!Number.isFinite(marketPrice) || marketPrice <= 0) return null;
+
+    const suggested = Number(data.recommended_buy_price ?? 0);
+    const dealPrice = normalizeDealPrice(
+      marketPrice,
+      listingPrice,
+      Number.isFinite(suggested) && suggested > 0 ? suggested : undefined,
+    );
 
     return {
       marketPrice,
+      dealPrice,
       sources: data.sources || [],
     };
   } catch {
@@ -282,70 +358,86 @@ export async function checkPrice(
   console.log(`[PRICE] Start check product_id=${productId} title="${productName}" price=${productPrice}`);
   const sellerInfo = `title: ${productName}\ncontent: ${sellerDescription || "(không có mô tả)"}`;
   const keys = getNextAvailableKey() as ApiKeyRow[];
-  const providerOrder = ["gemini", "groq", "cloudflare", "qwen", "openrouter"];
 
-  for (const provider of providerOrder) {
-    const providerKeys = keys.filter((k) => k.provider === provider);
+  // List order (priority ASC) is the fallback order — set via drag-and-drop on API Keys tab.
+  for (const key of keys) {
+    const provider = key.provider;
+    try {
+      let result: PriceResult | null = null;
+      const scrapedData = provider !== "gemini" ? await scrapeDataForAI(productName) : undefined;
 
-    for (const key of providerKeys) {
-      try {
-        let result: PriceResult | null = null;
-        const scrapedData = provider !== "gemini" ? await scrapeDataForAI(productName) : undefined;
-
-        switch (provider) {
-          case "gemini":
-            result = await checkWithGemini(key.api_key, sellerInfo);
-            break;
-          case "groq":
-            result = await checkWithGroq(key.api_key, sellerInfo, scrapedData);
-            break;
-          case "cloudflare":
-            result = await checkWithCloudflare(key.api_key, sellerInfo, scrapedData);
-            break;
-          case "qwen":
-            result = await checkWithQwen(key.api_key, sellerInfo, scrapedData);
-            break;
-          case "openrouter":
-            result = await checkWithOpenRouter(key.api_key, sellerInfo, scrapedData);
-            break;
-        }
-
-        if (result) {
-          incrementKeyUsage(key.id);
-          const margin = ((result.marketPrice - productPrice) / result.marketPrice) * 100;
-          updateProductPrice(productId, result.marketPrice, Math.round(margin * 100) / 100);
-          console.log(
-            `[PRICE] Success product_id=${productId} provider=${provider} market_price=${result.marketPrice}`,
-          );
-          return true;
-        }
-
-        incrementKeyUsage(key.id);
-      } catch (err) {
-        console.error(
-          `[PRICE] Provider failed product_id=${productId} provider=${provider} key_id=${key.id}`,
-          err,
-        );
-        if (isDailyQuotaError(err)) {
-          markKeyExhaustedToday(key.id, String(err));
-          console.warn(
-            `[PRICE] Key ${key.id} (${provider}) marked exhausted_today — skip until next day`,
-          );
-        } else {
-          markKeyError(key.id, String(err));
-        }
-        continue;
+      switch (provider) {
+        case "gemini":
+          result = await checkWithGemini(key.api_key, sellerInfo, productPrice);
+          break;
+        case "groq":
+          result = await checkWithGroq(key.api_key, sellerInfo, productPrice, scrapedData);
+          break;
+        case "cloudflare":
+          result = await checkWithCloudflare(key.api_key, sellerInfo, productPrice, scrapedData);
+          break;
+        case "qwen":
+          result = await checkWithQwen(key.api_key, sellerInfo, productPrice, scrapedData);
+          break;
+        case "openrouter":
+          result = await checkWithOpenRouter(key.api_key, sellerInfo, productPrice, scrapedData);
+          break;
+        default:
+          console.warn(`[PRICE] Unknown provider=${provider} key_id=${key.id}`);
+          continue;
       }
+
+      if (result) {
+        incrementKeyUsage(key.id);
+        const dealPrice = normalizeDealPrice(result.marketPrice, productPrice, result.dealPrice);
+        const margin = ((result.marketPrice - productPrice) / result.marketPrice) * 100;
+        updateProductPrice(
+          productId,
+          result.marketPrice,
+          dealPrice,
+          Math.round(margin * 100) / 100,
+        );
+        console.log(
+          `[PRICE] Success product_id=${productId} provider=${provider} market_price=${result.marketPrice} deal_price=${dealPrice}`,
+        );
+        return true;
+      }
+
+      incrementKeyUsage(key.id);
+    } catch (err) {
+      console.error(
+        `[PRICE] Provider failed product_id=${productId} provider=${provider} key_id=${key.id}`,
+        err,
+      );
+      if (isDailyQuotaError(err)) {
+        markKeyExhaustedToday(key.id, String(err));
+        console.warn(
+          `[PRICE] Key ${key.id} (${provider}) marked exhausted_today — skip until next day`,
+        );
+      } else {
+        markKeyError(key.id, String(err));
+      }
+      continue;
     }
   }
 
   // Final fallback: scrape only
-  const scrapeResult = await scrapeMarketPrice(productName);
+  const scrapeResult = await scrapeMarketPrice(productName, productPrice);
   if (scrapeResult) {
+    const dealPrice = normalizeDealPrice(
+      scrapeResult.marketPrice,
+      productPrice,
+      scrapeResult.dealPrice,
+    );
     const margin = ((scrapeResult.marketPrice - productPrice) / scrapeResult.marketPrice) * 100;
-    updateProductPrice(productId, scrapeResult.marketPrice, Math.round(margin * 100) / 100);
+    updateProductPrice(
+      productId,
+      scrapeResult.marketPrice,
+      dealPrice,
+      Math.round(margin * 100) / 100,
+    );
     console.log(
-      `[PRICE] Success product_id=${productId} provider=scrape market_price=${scrapeResult.marketPrice}`,
+      `[PRICE] Success product_id=${productId} provider=scrape market_price=${scrapeResult.marketPrice} deal_price=${dealPrice}`,
     );
     return true;
   }
