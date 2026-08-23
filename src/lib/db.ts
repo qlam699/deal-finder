@@ -44,6 +44,7 @@ function initSchema() {
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       checked INTEGER NOT NULL DEFAULT 0,
       raw_json TEXT,
+      content TEXT,
       deleted_at TEXT
     );
 
@@ -75,6 +76,27 @@ function initSchema() {
     d.exec("ALTER TABLE products ADD COLUMN listed_at INTEGER");
   } catch {
     // Column already exists.
+  }
+  try {
+    d.exec("ALTER TABLE products ADD COLUMN content TEXT");
+  } catch {
+    // Column already exists.
+  }
+
+  // Backfill content from raw_json.body for older rows.
+  const missingContent = d
+    .prepare(
+      "SELECT id, raw_json FROM products WHERE (content IS NULL OR content = '') AND raw_json IS NOT NULL",
+    )
+    .all() as { id: number; raw_json: string }[];
+  const updateContent = d.prepare("UPDATE products SET content = ? WHERE id = ?");
+  for (const row of missingContent) {
+    try {
+      const raw = JSON.parse(row.raw_json) as { body?: string };
+      if (raw.body) updateContent.run(raw.body, row.id);
+    } catch {
+      // ignore invalid json
+    }
   }
 
   // Backfill seen history from existing products.
@@ -128,8 +150,9 @@ export function insertProduct(product: {
   category?: string;
   image?: string;
   url?: string;
+  content?: string;
   raw_json?: string;
-}) {
+}): { changes: number; productId: number | null } {
   const d = getDb();
   const tx = d.transaction((input: typeof product) => {
     const seen = d
@@ -137,25 +160,40 @@ export function insertProduct(product: {
       .get(input.chotot_id) as { chotot_id: string } | undefined;
 
     if (seen) {
-      return { changes: 0 };
+      return { changes: 0, productId: null as number | null };
     }
 
     d.prepare("INSERT OR IGNORE INTO seen_products (chotot_id) VALUES (?)").run(
       input.chotot_id,
     );
 
-    return d
+    const result = d
       .prepare(`
-        INSERT OR IGNORE INTO products (chotot_id, title, price, listed_at, category, image, url, raw_json)
-        VALUES (@chotot_id, @title, @price, @listed_at, @category, @image, @url, @raw_json)
+        INSERT OR IGNORE INTO products (chotot_id, title, price, listed_at, category, image, url, content, raw_json)
+        VALUES (@chotot_id, @title, @price, @listed_at, @category, @image, @url, @content, @raw_json)
       `)
       .run(input);
+
+    return {
+      changes: result.changes,
+      productId: result.changes > 0 ? Number(result.lastInsertRowid) : null,
+    };
   });
 
   return tx(product);
 }
 
-export function getUncheckedProducts(limit = 10) {
+export function getProductsByIds(ids: number[]) {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(",");
+  return getDb()
+    .prepare(
+      `SELECT * FROM products WHERE id IN (${placeholders}) AND deleted_at IS NULL AND checked = 0`,
+    )
+    .all(...ids);
+}
+
+export function getUncheckedProducts(limit = 5) {
   return getDb()
     .prepare(
       "SELECT * FROM products WHERE checked = 0 AND deleted_at IS NULL ORDER BY COALESCE(listed_at, 0) DESC, created_at DESC LIMIT ?",
@@ -279,10 +317,7 @@ export function getApiKeys() {
 
 export function getActiveKeyForProvider(provider: string) {
   const d = getDb();
-  // Reset counters if day changed
-  d.prepare(
-    "UPDATE api_keys SET requests_today = 0, last_reset = date('now', 'localtime') WHERE last_reset != date('now', 'localtime')",
-  ).run();
+  refreshDailyKeyCounters(d);
   return d.prepare(
     "SELECT * FROM api_keys WHERE provider = ? AND status = 'active' ORDER BY priority ASC LIMIT 1"
   ).get(provider);
@@ -290,12 +325,43 @@ export function getActiveKeyForProvider(provider: string) {
 
 export function getNextAvailableKey() {
   const d = getDb();
-  d.prepare(
-    "UPDATE api_keys SET requests_today = 0, last_reset = date('now', 'localtime') WHERE last_reset != date('now', 'localtime')",
-  ).run();
+  refreshDailyKeyCounters(d);
   return d.prepare(
     "SELECT * FROM api_keys WHERE status = 'active' ORDER BY priority ASC"
   ).all();
+}
+
+function refreshDailyKeyCounters(d: Database.Database) {
+  // New VN local day: reset counters and revive keys exhausted by daily quota.
+  d.prepare(`
+    UPDATE api_keys
+    SET
+      requests_today = 0,
+      last_reset = date('now', 'localtime'),
+      status = 'active',
+      last_error = NULL
+    WHERE last_reset != date('now', 'localtime')
+      AND (
+        status = 'exhausted_today'
+        OR (
+          status = 'error'
+          AND (
+            lower(COALESCE(last_error, '')) LIKE '%429%'
+            OR lower(COALESCE(last_error, '')) LIKE '%too many requests%'
+            OR lower(COALESCE(last_error, '')) LIKE '%quota exceeded%'
+            OR lower(COALESCE(last_error, '')) LIKE '%free_tier%'
+            OR lower(COALESCE(last_error, '')) LIKE '%free tier%'
+          )
+        )
+      )
+  `).run();
+
+  // Still reset counters for other keys (error/active) on new day.
+  d.prepare(`
+    UPDATE api_keys
+    SET requests_today = 0, last_reset = date('now', 'localtime')
+    WHERE last_reset != date('now', 'localtime')
+  `).run();
 }
 
 export function incrementKeyUsage(id: number) {
@@ -304,6 +370,15 @@ export function incrementKeyUsage(id: number) {
 
 export function markKeyError(id: number, error: string) {
   getDb().prepare("UPDATE api_keys SET last_error = ?, status = 'error' WHERE id = ?").run(error, id);
+}
+
+/** Daily quota / rate-limit: skip this key until next local day. */
+export function markKeyExhaustedToday(id: number, error: string) {
+  getDb()
+    .prepare(
+      "UPDATE api_keys SET last_error = ?, status = 'exhausted_today', last_reset = date('now', 'localtime') WHERE id = ?",
+    )
+    .run(error, id);
 }
 
 export function addApiKey(provider: string, apiKey: string, label?: string) {

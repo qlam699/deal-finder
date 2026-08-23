@@ -18,6 +18,18 @@ export async function POST(request: NextRequest) {
     if (!body.provider || !body.api_key) {
       return NextResponse.json({ error: "provider and api_key are required" }, { status: 400 });
     }
+    if (body.provider === "cloudflare") {
+      const raw = String(body.api_key);
+      const sep = raw.indexOf("|");
+      const accountId = sep > 0 ? raw.slice(0, sep).trim() : "";
+      const token = sep > 0 ? raw.slice(sep + 1).trim() : "";
+      if (!/^[a-f0-9]{32}$/i.test(accountId) || !token) {
+        return NextResponse.json(
+          { error: "Cloudflare key must be ACCOUNT_ID|API_TOKEN (32-char hex Account ID)" },
+          { status: 400 },
+        );
+      }
+    }
     addApiKey(body.provider, body.api_key, body.label);
     return NextResponse.json({ success: true });
   }

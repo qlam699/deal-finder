@@ -18,7 +18,7 @@
 
 - Local Next.js + SQLite app.
 - Scrape Chợ Tốt via public gateway API.
-- Pricing chain: Gemini → DeepSeek → Qwen → OpenRouter → pure scrape.
+- Pricing chain: Gemini → Groq (`qwen/qwen3.6-27b`) → Cloudflare Workers AI → Qwen → OpenRouter → pure scrape.
 - Soft delete / hard delete / empty trash.
 - Persistent `seen_products` history so previously seen ads are never re-ingested (even after permanent delete).
 - Server-side pagination and search by title / listing ID.
@@ -39,7 +39,7 @@
 | Framework | Next.js 16 (App Router) |
 | UI | React 19, TypeScript, Tailwind CSS 4, shadcn/ui (Base UI) |
 | Database | SQLite (`better-sqlite3`), file `data.db` |
-| AI | `@google/generative-ai`, `openai` SDK (DeepSeek / Qwen / OpenRouter) |
+| AI | `@google/generative-ai`, `openai` SDK (Groq / Cloudflare / Qwen / OpenRouter) |
 | Assistive scrape | `cheerio` |
 | Local runtime | `npm run dev` / `npm run build` + `npm start` |
 
@@ -155,8 +155,8 @@ Default seed: Phones (`5010`), Laptops (`5020`), Tablets (`5030`).
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | |
-| `provider` | TEXT | `gemini` / `deepseek` / `qwen` / `openrouter` |
-| `api_key` | TEXT | Key (plain text in MVP) |
+| `provider` | TEXT | `gemini` / `groq` / `cloudflare` / `qwen` / `openrouter` |
+| `api_key` | TEXT | Key (plain text). Cloudflare: `ACCOUNT_ID\|API_TOKEN` |
 | `label` | TEXT | Optional label |
 | `priority` | INTEGER | Order within provider |
 | `requests_today` | INTEGER | Daily request counter |
@@ -194,10 +194,11 @@ Expected JSON fields: `min`, `max`, `average`, `recommended_buy_price`, `min_gap
 **Fallback chain:**
 
 1. Gemini (`gemini-2.5-flash` + `googleSearch`)
-2. DeepSeek (`deepseek-chat`) + helper scrape
-3. Qwen (`qwen-turbo`) + helper scrape
-4. OpenRouter (`openrouter/free`) + helper scrape
-5. Pure scrape via cheerio
+2. Groq (`qwen/qwen3.6-27b`) + helper scrape
+3. Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`) + helper scrape — key format `ACCOUNT_ID|API_TOKEN`
+4. Qwen (`qwen-turbo`) + helper scrape
+5. OpenRouter (`openrouter/free`) + helper scrape
+6. Pure scrape via cheerio
 
 **Margin formula currently used:**
 
@@ -379,3 +380,7 @@ Console prefixes:
 - Vietnam timezone support.
 - Pricing prompt with seller title + body.
 - Detailed scrape/price console logging.
+
+## Notes env:
+- limit scraper from api chotot = 5
+- limit get price from AI = 5

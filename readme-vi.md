@@ -18,7 +18,7 @@
 
 - Chạy local với Next.js + SQLite.
 - Scrape Chợ Tốt qua public gateway API.
-- Định giá: Gemini → DeepSeek → Qwen → OpenRouter → scrape thuần.
+- Định giá: Gemini → Groq (`qwen/qwen3.6-27b`) → Cloudflare Workers AI → Qwen → OpenRouter → scrape thuần.
 - Soft delete / hard delete / empty trash.
 - Lịch sử `seen_products` để không quét lại tin đã từng thấy (kể cả sau khi xóa vĩnh viễn).
 - Phân trang server-side, tìm kiếm theo title / mã tin.
@@ -39,7 +39,7 @@
 | Framework | Next.js 16 (App Router) |
 | UI | React 19, TypeScript, Tailwind CSS 4, shadcn/ui (Base UI) |
 | Database | SQLite (`better-sqlite3`), file `data.db` |
-| AI | `@google/generative-ai`, `openai` SDK (DeepSeek / Qwen / OpenRouter) |
+| AI | `@google/generative-ai`, `openai` SDK (Groq / Cloudflare / Qwen / OpenRouter) |
 | Scrape hỗ trợ | `cheerio` |
 | Runtime local | `npm run dev` / `npm run build` + `npm start` |
 
@@ -155,8 +155,8 @@ Seed mặc định: Điện thoại (`5010`), Laptop (`5020`), Máy tính bảng
 | Cột | Kiểu | Mô tả |
 |---|---|---|
 | `id` | INTEGER PK | |
-| `provider` | TEXT | `gemini` / `deepseek` / `qwen` / `openrouter` |
-| `api_key` | TEXT | Key (lưu plain text — MVP) |
+| `provider` | TEXT | `gemini` / `groq` / `cloudflare` / `qwen` / `openrouter` |
+| `api_key` | TEXT | Key (plain text). Cloudflare: `ACCOUNT_ID\|API_TOKEN` |
 | `label` | TEXT | Nhãn tùy chọn |
 | `priority` | INTEGER | Thứ tự trong provider |
 | `requests_today` | INTEGER | Số request trong ngày |
@@ -194,10 +194,11 @@ Yêu cầu AI trả JSON: `min`, `max`, `average`, `recommended_buy_price`, `min
 **Fallback chain:**
 
 1. Gemini (`gemini-2.5-flash` + `googleSearch`)
-2. DeepSeek (`deepseek-chat`) + scrape TGDD hỗ trợ
-3. Qwen (`qwen-turbo`) + scrape hỗ trợ
-4. OpenRouter (`openrouter/free`) + scrape hỗ trợ
-5. Scrape thuần (cheerio parse giá)
+2. Groq (`qwen/qwen3.6-27b`) + scrape TGDD hỗ trợ
+3. Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`) + scrape hỗ trợ — key dạng `ACCOUNT_ID|API_TOKEN`
+4. Qwen (`qwen-turbo`) + scrape hỗ trợ
+5. OpenRouter (`openrouter/free`) + scrape hỗ trợ
+6. Scrape thuần (cheerio parse giá)
 
 **Công thức margin hiện dùng:**
 

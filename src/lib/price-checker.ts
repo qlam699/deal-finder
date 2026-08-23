@@ -5,6 +5,7 @@ import {
   getNextAvailableKey,
   incrementKeyUsage,
   markKeyError,
+  markKeyExhaustedToday,
   updateProductPrice,
 } from "./db";
 
@@ -57,20 +58,30 @@ async function checkWithGemini(apiKey: string, sellerInfo: string): Promise<Pric
   return parseAIResponse(text);
 }
 
-async function checkWithDeepSeek(apiKey: string, sellerInfo: string, scrapedData?: string): Promise<PriceResult | null> {
-  console.log(`[PRICE] Trying provider=deepseek`);
-  const client = new OpenAI({ baseURL: "https://api.deepseek.com", apiKey });
+async function checkWithGroq(apiKey: string, sellerInfo: string, scrapedData?: string): Promise<PriceResult | null> {
+  console.log(`[PRICE] Trying provider=groq model=qwen/qwen3.6-27b`);
+  const client = new OpenAI({ baseURL: "https://api.groq.com/openai/v1", apiKey });
   const prompt = scrapedData
     ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo)}`
     : PRICE_PROMPT(sellerInfo);
 
   const response = await client.chat.completions.create({
-    model: "deepseek-chat",
+    model: "qwen/qwen3.6-27b",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.1,
+    max_completion_tokens: 1024,
+    // Disable thinking mode so response is clean JSON (Groq Qwen3.6).
+    reasoning_effort: "none",
+  } as Parameters<typeof client.chat.completions.create>[0] & {
+    reasoning_effort?: string;
   });
 
-  return parseAIResponse(response.choices[0]?.message?.content || "");
+  const text = response.choices[0]?.message?.content || "";
+  const parsed = parseAIResponse(text);
+  if (!parsed) {
+    console.warn(`[PRICE] Groq parse failed, raw snippet: ${text.slice(0, 300)}`);
+  }
+  return parsed;
 }
 
 async function checkWithQwen(apiKey: string, sellerInfo: string, scrapedData?: string): Promise<PriceResult | null> {
@@ -103,6 +114,49 @@ async function checkWithOpenRouter(apiKey: string, sellerInfo: string, scrapedDa
   });
 
   return parseAIResponse(response.choices[0]?.message?.content || "");
+}
+
+/** Format stored in api_keys.api_key: ACCOUNT_ID|API_TOKEN */
+function parseCloudflareCredential(apiKey: string): { accountId: string; token: string } | null {
+  const sep = apiKey.indexOf("|");
+  if (sep <= 0 || sep === apiKey.length - 1) return null;
+  const accountId = apiKey.slice(0, sep).trim();
+  const token = apiKey.slice(sep + 1).trim();
+  if (!/^[a-f0-9]{32}$/i.test(accountId) || !token) return null;
+  return { accountId, token };
+}
+
+async function checkWithCloudflare(
+  apiKey: string,
+  sellerInfo: string,
+  scrapedData?: string,
+): Promise<PriceResult | null> {
+  const cred = parseCloudflareCredential(apiKey);
+  if (!cred) {
+    throw new Error("Invalid Cloudflare credential format (expected ACCOUNT_ID|API_TOKEN)");
+  }
+
+  console.log(`[PRICE] Trying provider=cloudflare model=@cf/meta/llama-3.1-8b-instruct-fast`);
+  const client = new OpenAI({
+    apiKey: cred.token,
+    baseURL: `https://api.cloudflare.com/client/v4/accounts/${cred.accountId}/ai/v1`,
+  });
+  const prompt = scrapedData
+    ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo)}`
+    : PRICE_PROMPT(sellerInfo);
+
+  const response = await client.chat.completions.create({
+    model: "@cf/meta/llama-3.1-8b-instruct-fast",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.1,
+  });
+
+  const text = response.choices[0]?.message?.content || "";
+  const parsed = parseAIResponse(text);
+  if (!parsed) {
+    console.warn(`[PRICE] Cloudflare parse failed, raw snippet: ${text.slice(0, 300)}`);
+  }
+  return parsed;
 }
 
 // Scrape fallback
@@ -167,19 +221,55 @@ export async function scrapeDataForAI(productName: string): Promise<string> {
 
 function parseAIResponse(text: string): PriceResult | null {
   try {
-    const jsonMatch = text.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) return null;
+    // Strip thinking / markdown wrappers from models like Groq Qwen3.6
+    let cleaned = text
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/```(?:json)?/gi, "")
+      .trim();
 
-    const data = JSON.parse(jsonMatch[0]);
-    if (!data.average || data.average === 0) return null;
+    // Prefer a JSON object that contains "average"
+    const candidates = cleaned.match(/\{[\s\S]*?\}/g) || [];
+    const withAverage = [...candidates].reverse().find((c) => /"average"\s*:/.test(c));
+
+    let raw = withAverage || null;
+    if (!raw) {
+      const start = cleaned.lastIndexOf("{");
+      const end = cleaned.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        raw = cleaned.slice(start, end + 1);
+      }
+    }
+    if (!raw) return null;
+
+    const data = JSON.parse(raw);
+    const marketPrice = Number(data.average ?? data.recommended_buy_price ?? 0);
+    if (!Number.isFinite(marketPrice) || marketPrice <= 0) return null;
 
     return {
-      marketPrice: data.average,
+      marketPrice,
       sources: data.sources || [],
     };
   } catch {
     return null;
   }
+}
+
+/** Daily free-tier / rate-limit — skip key until next VN local day. */
+function isDailyQuotaError(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return (
+    msg.includes("429") ||
+    msg.includes("too many requests") ||
+    msg.includes("quota exceeded") ||
+    msg.includes("free_tier") ||
+    msg.includes("free tier") ||
+    msg.includes("rate-limit") ||
+    msg.includes("rate limit") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("generaterequestsperday") ||
+    msg.includes("neuron") ||
+    msg.includes("workers ai")
+  );
 }
 
 // Main price check with fallback chain
@@ -192,7 +282,7 @@ export async function checkPrice(
   console.log(`[PRICE] Start check product_id=${productId} title="${productName}" price=${productPrice}`);
   const sellerInfo = `title: ${productName}\ncontent: ${sellerDescription || "(không có mô tả)"}`;
   const keys = getNextAvailableKey() as ApiKeyRow[];
-  const providerOrder = ["gemini", "deepseek", "qwen", "openrouter"];
+  const providerOrder = ["gemini", "groq", "cloudflare", "qwen", "openrouter"];
 
   for (const provider of providerOrder) {
     const providerKeys = keys.filter((k) => k.provider === provider);
@@ -206,8 +296,11 @@ export async function checkPrice(
           case "gemini":
             result = await checkWithGemini(key.api_key, sellerInfo);
             break;
-          case "deepseek":
-            result = await checkWithDeepSeek(key.api_key, sellerInfo, scrapedData);
+          case "groq":
+            result = await checkWithGroq(key.api_key, sellerInfo, scrapedData);
+            break;
+          case "cloudflare":
+            result = await checkWithCloudflare(key.api_key, sellerInfo, scrapedData);
             break;
           case "qwen":
             result = await checkWithQwen(key.api_key, sellerInfo, scrapedData);
@@ -233,7 +326,14 @@ export async function checkPrice(
           `[PRICE] Provider failed product_id=${productId} provider=${provider} key_id=${key.id}`,
           err,
         );
-        markKeyError(key.id, String(err));
+        if (isDailyQuotaError(err)) {
+          markKeyExhaustedToday(key.id, String(err));
+          console.warn(
+            `[PRICE] Key ${key.id} (${provider}) marked exhausted_today — skip until next day`,
+          );
+        } else {
+          markKeyError(key.id, String(err));
+        }
         continue;
       }
     }

@@ -29,6 +29,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface Product {
   id: number;
@@ -38,6 +44,7 @@ interface Product {
   category: string;
   image: string;
   url: string;
+  content?: string | null;
   market_price: number | null;
   profit_margin: number | null;
   created_at: string;
@@ -122,8 +129,9 @@ export default function Dashboard() {
   const [deletedTotal, setDeletedTotal] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(false);
   const [scraping, setScraping] = useState(false);
+  const [cronRunning, setCronRunning] = useState(false);
+  const [jobMessage, setJobMessage] = useState("");
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
   const [searchInput, setSearchInput] = useState("");
@@ -163,12 +171,69 @@ export default function Dashboard() {
     setApiKeys(await res.json());
   };
 
+  const fetchJobStatus = useCallback(async () => {
+    const res = await fetch("/api/scrape");
+    const data = await res.json();
+    setScraping(!!data.running);
+    setCronRunning(!!data.cronRunning);
+    if (data.running) {
+      setJobMessage("Đang quét ngầm trên server...");
+    } else if (data.lastResult) {
+      setJobMessage(
+        `Lần quét gần nhất: +${data.lastResult.newProducts} tin mới, định giá ${data.lastResult.priceChecked} sản phẩm` +
+          (data.cronRunning ? ` · Cron ${data.intervalMinutes || 10} phút` : ""),
+      );
+    } else if (data.cronRunning) {
+      setJobMessage(`Cron đang bật (mỗi ${data.intervalMinutes || 10} phút)`);
+    } else if (data.lastError) {
+      setJobMessage(`Lỗi lần quét trước: ${data.lastError}`);
+    }
+    return data;
+  }, []);
+
+  const refreshListAjax = useCallback(async () => {
+    await Promise.all([fetchProducts(), fetchDeletedProducts(), fetchApiKeys()]);
+  }, [fetchProducts, fetchDeletedProducts]);
+
   useEffect(() => {
     fetchProducts();
     fetchDeletedProducts();
     fetchCategories();
     fetchApiKeys();
-  }, [fetchProducts, fetchDeletedProducts]);
+    fetchJobStatus();
+  }, [fetchProducts, fetchDeletedProducts, fetchJobStatus]);
+
+  // While job/cron is active: poll status + refresh product list via AJAX.
+  useEffect(() => {
+    if (!scraping && !cronRunning) return;
+
+    let cancelled = false;
+    let wasRunning = scraping;
+
+    const tick = async () => {
+      const data = await fetchJobStatus();
+      if (cancelled) return;
+      // Refresh list while scanning so new rows appear without F5.
+      await fetchProducts();
+      if (cancelled) return;
+
+      if (wasRunning && !data.running) {
+        // Job just finished — final refresh including trash + keys.
+        await refreshListAjax();
+      }
+      wasRunning = !!data.running;
+    };
+
+    void tick();
+    const timer = setInterval(() => {
+      void tick();
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [scraping, cronRunning, fetchJobStatus, fetchProducts, refreshListAjax]);
 
   useEffect(() => {
     setProductsPage(1);
@@ -183,12 +248,44 @@ export default function Dashboard() {
 
   const handleScrape = async () => {
     setScraping(true);
+    setProductsPage(1);
+    setSortBy("created_at");
+    setJobMessage("Đã gửi lệnh quét ngầm...");
     try {
-      await fetch("/api/scrape", { method: "POST" });
+      const res = await fetch("/api/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      setJobMessage(
+        data.message ||
+          "Đã bắt đầu quét ngầm. Danh sách sẽ tự cập nhật, không cần F5.",
+      );
+      await fetchJobStatus();
+      // Immediate ajax refresh (may already have new rows if scrape is fast).
       await fetchProducts();
-    } finally {
+    } catch (err) {
       setScraping(false);
+      setJobMessage(`Không start được job: ${String(err)}`);
     }
+  };
+
+  const handleToggleCron = async () => {
+    if (cronRunning) {
+      await fetch("/api/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop-cron" }),
+      });
+    } else {
+      await fetch("/api/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start-cron", intervalMinutes: 10 }),
+      });
+    }
+    await fetchJobStatus();
   };
 
   const handleToggleCategory = async (id: number, enabled: boolean) => {
@@ -222,14 +319,15 @@ export default function Dashboard() {
         }),
       });
       if (!res.ok) {
-        throw new Error("Không thêm được API key");
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error || "Không thêm được API key");
       }
       formEl.reset();
       setNewProvider("gemini");
       await fetchApiKeys();
     } catch (err) {
       console.error(err);
-      alert("Thêm API key thất bại. Thử lại.");
+      alert(err instanceof Error ? err.message : "Thêm API key thất bại. Thử lại.");
     } finally {
       setAddingKey(false);
     }
@@ -300,12 +398,23 @@ export default function Dashboard() {
   };
 
   return (
+    <TooltipProvider delay={200}>
     <main className="container mx-auto p-6 max-w-7xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold">Chotot Deal Finder</h1>
-        <Button onClick={handleScrape} disabled={scraping}>
-          {scraping ? "Đang quét..." : "Quét sản phẩm mới"}
-        </Button>
+      <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Chotot Deal Finder</h1>
+          {jobMessage && (
+            <p className="text-sm text-muted-foreground mt-1">{jobMessage}</p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleToggleCron}>
+            {cronRunning ? "Tắt quét định kỳ" : "Bật quét định kỳ (10p)"}
+          </Button>
+          <Button onClick={handleScrape} disabled={scraping}>
+            {scraping ? "Đang quét ngầm..." : "Quét sản phẩm mới"}
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="products">
@@ -391,7 +500,22 @@ export default function Dashboard() {
                         <img src={normalizeImageUrl(p.image)} alt="" className="w-12 h-12 object-cover rounded" />
                       )}
                     </TableCell>
-                    <TableCell className="font-medium max-w-xs truncate">{p.title}</TableCell>
+                    <TableCell className="font-medium max-w-xs">
+                      <Tooltip>
+                        <TooltipTrigger className="block w-full truncate text-left cursor-help">
+                          {p.title}
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="bottom"
+                          align="start"
+                          className="max-w-md whitespace-pre-wrap break-words text-left leading-relaxed"
+                        >
+                          {p.content?.trim()
+                            ? p.content
+                            : "Chưa có nội dung mô tả cho tin này."}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
                     <TableCell><Badge variant="secondary">{p.category}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {formatDateTime(p.listed_at || p.created_at)}
@@ -486,7 +610,22 @@ export default function Dashboard() {
                   )}
                   {deletedProducts.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell className="font-medium max-w-md truncate">{p.title}</TableCell>
+                        <TableCell className="font-medium max-w-md">
+                          <Tooltip>
+                            <TooltipTrigger className="block w-full truncate text-left cursor-help">
+                              {p.title}
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="bottom"
+                              align="start"
+                              className="max-w-md whitespace-pre-wrap break-words text-left leading-relaxed"
+                            >
+                              {p.content?.trim()
+                                ? p.content
+                                : "Chưa có nội dung mô tả cho tin này."}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
                       <TableCell>
                         <Badge variant="secondary">{p.category}</Badge>
                       </TableCell>
@@ -605,30 +744,40 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
-                Thứ tự ưu tiên: Gemini (grounding) → DeepSeek → Qwen → OpenRouter → Scrape thuần
+                Thứ tự ưu tiên: Gemini (grounding) → Groq (qwen/qwen3.6-27b) → Cloudflare Workers AI → Qwen → OpenRouter → Scrape thuần
               </p>
 
               <form onSubmit={handleAddApiKey} className="flex gap-2 mb-6">
                 <Select value={newProvider} onValueChange={(v) => setNewProvider(v || "gemini")}>
-                  <SelectTrigger className="w-40">
+                  <SelectTrigger className="w-48">
                     <SelectValue placeholder="Provider">
-                      {newProvider === "deepseek"
-                        ? "DeepSeek"
-                        : newProvider === "qwen"
-                          ? "Qwen"
-                          : newProvider === "openrouter"
-                            ? "OpenRouter"
-                            : "Gemini"}
+                      {newProvider === "groq"
+                        ? "Groq"
+                        : newProvider === "cloudflare"
+                          ? "Cloudflare"
+                          : newProvider === "qwen"
+                            ? "Qwen"
+                            : newProvider === "openrouter"
+                              ? "OpenRouter"
+                              : "Gemini"}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="gemini">Gemini</SelectItem>
-                    <SelectItem value="deepseek">DeepSeek</SelectItem>
+                    <SelectItem value="groq">Groq (Qwen3.6-27B)</SelectItem>
+                    <SelectItem value="cloudflare">Cloudflare Workers AI</SelectItem>
                     <SelectItem value="qwen">Qwen</SelectItem>
                     <SelectItem value="openrouter">OpenRouter</SelectItem>
                   </SelectContent>
                 </Select>
-                <Input name="api_key" placeholder="API Key" required className="flex-1" />
+                <Input
+                  name="api_key"
+                  placeholder={
+                    newProvider === "cloudflare" ? "ACCOUNT_ID|API_TOKEN" : "API Key"
+                  }
+                  required
+                  className="flex-1"
+                />
                 <Input name="label" placeholder="Nhãn (tùy chọn)" className="w-40" />
                 <Button type="submit" disabled={addingKey}>
                   {addingKey ? "Đang thêm..." : "Thêm"}
@@ -656,15 +805,23 @@ export default function Dashboard() {
                       <TableCell>{k.label || "—"}</TableCell>
                       <TableCell>{k.requests_today} req</TableCell>
                       <TableCell>
-                        <Badge variant={k.status === "active" ? "default" : "destructive"}>
-                          {k.status}
+                        <Badge
+                          variant={
+                            k.status === "active"
+                              ? "default"
+                              : k.status === "exhausted_today"
+                                ? "secondary"
+                                : "destructive"
+                          }
+                        >
+                          {k.status === "exhausted_today" ? "hết quota hôm nay" : k.status}
                         </Badge>
                         {k.last_error && (
                           <p className="text-xs text-destructive mt-1 max-w-xs truncate">{k.last_error}</p>
                         )}
                       </TableCell>
                       <TableCell className="space-x-1">
-                        {k.status === "error" && (
+                        {(k.status === "error" || k.status === "exhausted_today") && (
                           <Button variant="outline" size="sm" onClick={() => handleResetKey(k.id)}>
                             Reset
                           </Button>
@@ -689,5 +846,6 @@ export default function Dashboard() {
         </TabsContent>
       </Tabs>
     </main>
+    </TooltipProvider>
   );
 }
