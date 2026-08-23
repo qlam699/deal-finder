@@ -30,6 +30,10 @@
 - Thông báo Telegram / Email.
 - Cron bền vững ngoài process Next.js.
 
+### 1.4 Deploy production
+
+Xem **[deploy/README.md](./deploy/README.md)** — VPS Webinoly + systemd, GitHub Actions push `main`. Domain: `https://deal.codayroi.com`.
+
 ---
 
 ## 2. Tech stack
@@ -190,7 +194,7 @@ Key-value (vd: `timezone_vn_migrated`).
 > `title: ...`  
 > `content: ...` (body mô tả)
 
-AI trả JSON: `average` → `market_price` (bán), `recommended_buy_price` → `deal_price` (mua). Cùng một `PRICE_PROMPT` cho mọi AI provider.
+AI trả JSON: `average` → `market_price` (bán), `recommended_buy_price` → `deal_price` (mua). Cùng một `PRICE_PROMPT` cho mọi AI provider. Scrape hỗ trợ: TGDD + Hoàng Hà + tin tương tự Chợ Tốt (HCM).
 
 **Fallback chain:** theo `priority` của từng API key (trên → dưới ở tab API Keys). Scrape thuần là bước cuối nếu mọi key active thất bại.
 
@@ -363,7 +367,7 @@ Prefix console để debug:
 4. Thông báo deal tốt (Telegram).
 5. Filter theo ngưỡng % lời tối thiểu.
 6. Test tự động cho scraper + price-checker parser.
-7. Deploy (VPS) với backup `data.db`.
+7. Deploy (VPS) với backup `data.db`. → Xem [deploy/README.md](./deploy/README.md).
 
 ---
 

@@ -219,39 +219,168 @@ async function checkWithCloudflare(
   return parsed;
 }
 
-// Scrape fallback
+const FETCH_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+};
+
+function parseVndNumber(raw: string): number | null {
+  const digits = raw.replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const num = parseInt(digits, 10);
+  if (!Number.isFinite(num) || num < 100_000 || num > 100_000_000) return null;
+  return num;
+}
+
+function extractPricesFromHtml(html: string, limit = 12): number[] {
+  const prices: number[] = [];
+  const re = /(\d{1,3}(?:[.,]\d{3}){1,4})\s*(?:đ|₫|Đ)/g;
+  for (const m of html.matchAll(re)) {
+    const n = parseVndNumber(m[1]);
+    if (n) prices.push(n);
+    if (prices.length >= limit) break;
+  }
+  return prices;
+}
+
+type ScrapeHit = { source: string; label: string; price: number; url: string };
+
+async function scrapeTheGioiDiDong(productName: string): Promise<ScrapeHit[]> {
+  const url = `https://www.thegioididong.com/tim-kiem?key=${encodeURIComponent(productName)}`;
+  console.log(`[PRICE] Scrape TGDD url=${url}`);
+  const res = await fetch(url, { headers: FETCH_HEADERS });
+  if (!res.ok) return [];
+  const html = await res.text();
+  const $ = cheerio.load(html);
+  const hits: ScrapeHit[] = [];
+
+  $(".item, .product-item, [class*='product']").slice(0, 6).each((_, el) => {
+    const name = $(el).find("[class*='name'], h3, .product-name").first().text().trim();
+    const priceText = $(el).find("[class*='price']").first().text().trim();
+    const price = parseVndNumber(priceText);
+    if (name && price) hits.push({ source: "TGDD", label: name, price, url });
+  });
+
+  if (hits.length === 0) {
+    for (const price of extractPricesFromHtml(html, 6)) {
+      hits.push({ source: "TGDD", label: productName, price, url });
+    }
+  }
+  return hits;
+}
+
+async function scrapeHoangHa(productName: string): Promise<ScrapeHit[]> {
+  const url = `https://hoanghamobile.com/tim-kiem?kw=${encodeURIComponent(productName)}`;
+  console.log(`[PRICE] Scrape HoangHa url=${url}`);
+  const res = await fetch(url, { headers: FETCH_HEADERS });
+  if (!res.ok) return [];
+  const html = await res.text();
+  const $ = cheerio.load(html);
+  const hits: ScrapeHit[] = [];
+
+  $("[class*='price'], .price, .product-price").slice(0, 8).each((_, el) => {
+    const block = $(el).closest("a, .product, .item, li, article");
+    const name =
+      block.find("[class*='name'], h3, h2, .title").first().text().trim() ||
+      block.attr("title") ||
+      productName;
+    // Lấy giá đầu (giá đang bán), bỏ giá gạch.
+    const priceText = $(el).text().split(/\s{2,}|\n/)[0] || $(el).text();
+    const price = parseVndNumber(priceText);
+    if (price) hits.push({ source: "HoangHa", label: name.slice(0, 120), price, url });
+  });
+
+  if (hits.length === 0) {
+    for (const price of extractPricesFromHtml(html, 6)) {
+      hits.push({ source: "HoangHa", label: productName, price, url });
+    }
+  }
+  return hits.slice(0, 6);
+}
+
+/** Tin tương tự trên Chợ Tốt HCM — sát giá máy cũ hơn shop mới. */
+async function scrapeChototComps(productName: string): Promise<ScrapeHit[]> {
+  // Rút gọn query để API search tốt hơn (bỏ % pin / emoji dài).
+  const q = productName
+    .replace(/\d+\s*%/g, " ")
+    .replace(/[^\p{L}\p{N}\s/+\-.]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  if (!q) return [];
+
+  const url = `https://gateway.chotot.com/v1/public/ad-listing?q=${encodeURIComponent(q)}&region_v2=13000&limit=10&st=s,k`;
+  console.log(`[PRICE] Scrape Chotot comps url=${url}`);
+  const res = await fetch(url, { headers: FETCH_HEADERS });
+  if (!res.ok) return [];
+  const data = (await res.json()) as {
+    ads?: { list_id?: number; subject?: string; price?: number }[];
+  };
+
+  const hits: ScrapeHit[] = [];
+  for (const ad of data.ads || []) {
+    const price = Number(ad.price);
+    if (!Number.isFinite(price) || price < 100_000 || price > 100_000_000) continue;
+    hits.push({
+      source: "Chotot",
+      label: (ad.subject || q).slice(0, 120),
+      price,
+      url: ad.list_id ? `https://www.chotot.com/${ad.list_id}.htm` : url,
+    });
+  }
+  return hits;
+}
+
+async function collectMarketHits(productName: string): Promise<ScrapeHit[]> {
+  const results = await Promise.allSettled([
+    scrapeTheGioiDiDong(productName),
+    scrapeHoangHa(productName),
+    scrapeChototComps(productName),
+  ]);
+
+  const hits: ScrapeHit[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") hits.push(...r.value);
+    else console.warn("[PRICE] Scrape source failed", r.reason);
+  }
+  return hits;
+}
+
+function formatHitsForAI(hits: ScrapeHit[]): string {
+  if (hits.length === 0) return "";
+  return hits.map((h) => `[${h.source}] ${h.label}: ${h.price.toLocaleString("vi-VN")}đ`).join("\n");
+}
+
+function averageHitPrice(hits: ScrapeHit[]): number | null {
+  if (hits.length === 0) return null;
+  // Ưu tiên tin Chợ Tốt (máy cũ) nếu có ≥2 mẫu; không thì trung bình tất cả.
+  const chotot = hits.filter((h) => h.source === "Chotot");
+  const pool = chotot.length >= 2 ? chotot : hits;
+  const prices = pool.map((h) => h.price).sort((a, b) => a - b);
+  // Bỏ outlier đầu/cuối nếu đủ mẫu.
+  const trimmed =
+    prices.length >= 5 ? prices.slice(1, prices.length - 1) : prices;
+  return Math.round(trimmed.reduce((a, b) => a + b, 0) / trimmed.length);
+}
+
+// Scrape fallback (multi-source)
 async function scrapeMarketPrice(
   productName: string,
   listingPrice: number,
 ): Promise<PriceResult | null> {
   try {
-    const encoded = encodeURIComponent(productName);
-    const url = `https://www.thegioididong.com/tim-kiem?key=${encoded}`;
-    console.log(`[PRICE] Fallback scrape url=${url}`);
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    });
-    if (!res.ok) return null;
-
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const prices: number[] = [];
-
-    $(".price, .btn-price, [class*='price']").each((_, el) => {
-      const text = $(el).text().replace(/[^\d]/g, "");
-      const num = parseInt(text);
-      if (num > 100000 && num < 100000000) {
-        prices.push(num);
-      }
-    });
-
-    if (prices.length === 0) return null;
-
-    const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+    const hits = await collectMarketHits(productName);
+    const avg = averageHitPrice(hits);
+    if (!avg) return null;
+    const sources = [...new Set(hits.map((h) => h.url))];
+    console.log(
+      `[PRICE] Fallback scrape hits=${hits.length} avg=${avg} sources=${[...new Set(hits.map((h) => h.source))].join(",")}`,
+    );
     return {
       marketPrice: avg,
       dealPrice: normalizeDealPrice(avg, listingPrice),
-      sources: [url],
+      sources,
       provider: "scrape",
     };
   } catch {
@@ -261,27 +390,10 @@ async function scrapeMarketPrice(
 
 export async function scrapeDataForAI(productName: string): Promise<string> {
   try {
-    const encoded = encodeURIComponent(productName);
-    const url = `https://www.thegioididong.com/tim-kiem?key=${encoded}`;
-    console.log(`[PRICE] Scrape support data url=${url}`);
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    });
-    if (!res.ok) return "";
-
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const results: string[] = [];
-
-    $(".item, .product-item, [class*='product']").slice(0, 5).each((_, el) => {
-      const name = $(el).find("[class*='name'], h3, .product-name").first().text().trim();
-      const price = $(el).find("[class*='price']").first().text().trim();
-      if (name && price) {
-        results.push(`${name}: ${price}`);
-      }
-    });
-
-    return results.join("\n") || "";
+    const hits = await collectMarketHits(productName);
+    const text = formatHitsForAI(hits);
+    console.log(`[PRICE] Scrape support lines=${hits.length}`);
+    return text;
   } catch {
     return "";
   }

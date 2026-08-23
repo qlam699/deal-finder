@@ -30,6 +30,10 @@
 - Telegram / Email alerts.
 - Durable cron outside the Next.js process.
 
+### 1.4 Production deploy
+
+See **[deploy/README.md](./deploy/README.md)** for VPS (Webinoly + systemd) and GitHub Actions (`main` → SSH deploy). Domain: `https://deal.codayroi.com`.
+
 ---
 
 ## 2. Tech stack
@@ -194,7 +198,7 @@ Expected JSON: `average` → `market_price` (sell), `recommended_buy_price` → 
 
 **Fallback chain:** ordered by each API key’s `priority` (list top → bottom on the API Keys tab). Scrape-only remains the last resort after all active keys fail.
 
-Supported providers per key: Gemini (`gemini-2.5-flash` + `googleSearch`), Groq (`qwen/qwen3.6-27b`), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini calls use helper scrape first.
+Supported providers per key: Gemini (`gemini-2.5-flash` + `googleSearch`), Groq (`qwen/qwen3.6-27b`), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini calls use helper scrape first (TGDD + Hoàng Hà + tin tương tự Chợ Tốt HCM).
 
 **Margin formula currently used:**
 
@@ -363,7 +367,7 @@ Console prefixes:
 4. Add deal alerts (Telegram).
 5. Filter by minimum profit threshold.
 6. Add automated tests for scraper + JSON price parser.
-7. Deploy to a VPS with `data.db` backups.
+7. Deploy to a VPS with `data.db` backups. → See [deploy/README.md](./deploy/README.md) (implemented: systemd + Actions).
 
 ---
 

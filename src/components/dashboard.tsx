@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { GripVertical } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -122,12 +123,20 @@ function normalizeImageUrl(url?: string): string {
 
 export default function Dashboard() {
   const PAGE_SIZE = 10;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // URL is the source of truth for pagination (survives F5).
+  const productsPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+  const deletedPage = Math.max(1, parseInt(searchParams.get("trashPage") || "1", 10) || 1);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [deletedProducts, setDeletedProducts] = useState<Product[]>([]);
-  const [productsPage, setProductsPage] = useState(1);
   const [productsTotalPages, setProductsTotalPages] = useState(1);
-  const [deletedPage, setDeletedPage] = useState(1);
+  const [productsLoaded, setProductsLoaded] = useState(false);
   const [deletedTotalPages, setDeletedTotalPages] = useState(1);
+  const [deletedLoaded, setDeletedLoaded] = useState(false);
   const [deletedTotal, setDeletedTotal] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -145,10 +154,37 @@ export default function Dashboard() {
   const dragKeyIndex = useRef<number | null>(null);
   const apiKeysOrderRef = useRef<ApiKey[]>([]);
   const priceCheckErrorsShown = useRef<Set<number>>(new Set());
+  const prevSearchRef = useRef<string | null>(null);
 
   useEffect(() => {
     apiKeysOrderRef.current = apiKeys;
   }, [apiKeys]);
+
+  const goToProductsPage = useCallback(
+    (page: number) => {
+      const next = Math.max(1, page);
+      const params = new URLSearchParams(searchParams.toString());
+      if (next <= 1) params.delete("page");
+      else params.set("page", String(next));
+      const qs = params.toString();
+      if (qs === searchParams.toString()) return;
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  const goToDeletedPage = useCallback(
+    (page: number) => {
+      const next = Math.max(1, page);
+      const params = new URLSearchParams(searchParams.toString());
+      if (next <= 1) params.delete("trashPage");
+      else params.set("trashPage", String(next));
+      const qs = params.toString();
+      if (qs === searchParams.toString()) return;
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   const fetchProducts = useCallback(async () => {
     const params = new URLSearchParams({
@@ -162,6 +198,7 @@ export default function Dashboard() {
     const data = await res.json();
     setProducts(data.items || []);
     setProductsTotalPages(data.totalPages || 1);
+    setProductsLoaded(true);
   }, [filter, sortBy, productsPage, search]);
 
   const fetchDeletedProducts = useCallback(async () => {
@@ -170,6 +207,7 @@ export default function Dashboard() {
     setDeletedProducts(data.items || []);
     setDeletedTotalPages(data.totalPages || 1);
     setDeletedTotal(data.total || 0);
+    setDeletedLoaded(true);
   }, [deletedPage]);
 
   const fetchCategories = async () => {
@@ -264,19 +302,36 @@ export default function Dashboard() {
   }, [scraping, cronRunning, fetchJobStatus, fetchProducts, fetchApiKeys, refreshListAjax]);
 
   useEffect(() => {
-    setProductsPage(1);
-  }, [filter, sortBy, search]);
-
-  useEffect(() => {
     const timer = setTimeout(() => {
-      setSearch(searchInput.trim());
+      const next = searchInput.trim();
+      setSearch(next);
+      // Reset page only when user actually changes search (not on mount / F5).
+      if (prevSearchRef.current !== null && prevSearchRef.current !== next) {
+        goToProductsPage(1);
+      }
+      prevSearchRef.current = next;
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, goToProductsPage]);
+
+  // Clamp page if total shrinks (e.g. after delete / filter).
+  useEffect(() => {
+    if (!productsLoaded) return;
+    if (productsPage > productsTotalPages) {
+      goToProductsPage(Math.max(1, productsTotalPages));
+    }
+  }, [productsLoaded, productsPage, productsTotalPages, goToProductsPage]);
+
+  useEffect(() => {
+    if (!deletedLoaded) return;
+    if (deletedPage > deletedTotalPages) {
+      goToDeletedPage(Math.max(1, deletedTotalPages));
+    }
+  }, [deletedLoaded, deletedPage, deletedTotalPages, goToDeletedPage]);
 
   const handleScrape = async () => {
     setScraping(true);
-    setProductsPage(1);
+    goToProductsPage(1);
     setSortBy("created_at");
     setJobMessage("Đã gửi lệnh quét ngầm...");
     try {
@@ -528,7 +583,7 @@ export default function Dashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "empty-trash" }),
     });
-    setDeletedPage(1);
+    goToDeletedPage(1);
     await fetchDeletedProducts();
   };
 
@@ -579,7 +634,13 @@ export default function Dashboard() {
               className="w-full sm:w-80"
             />
 
-            <Select value={filter} onValueChange={(v) => setFilter(v || "")}>
+            <Select
+              value={filter}
+              onValueChange={(v) => {
+                setFilter(v || "");
+                goToProductsPage(1);
+              }}
+            >
               <SelectTrigger className="w-48">
                 <SelectValue placeholder="Tất cả danh mục">
                   {filter || "Tất cả danh mục"}
@@ -595,7 +656,13 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
 
-            <Select value={sortBy} onValueChange={(v) => { setSortBy(v || "created_at"); }}>
+            <Select
+              value={sortBy}
+              onValueChange={(v) => {
+                setSortBy(v || "created_at");
+                goToProductsPage(1);
+              }}
+            >
               <SelectTrigger className="w-48">
                 <SelectValue>
                   {sortBy === "profit_margin"
@@ -744,7 +811,7 @@ export default function Dashboard() {
               variant="outline"
               size="sm"
               disabled={productsPage <= 1}
-              onClick={() => setProductsPage((p) => Math.max(1, p - 1))}
+              onClick={() => goToProductsPage(productsPage - 1)}
             >
               Trước
             </Button>
@@ -755,7 +822,7 @@ export default function Dashboard() {
               variant="outline"
               size="sm"
               disabled={productsPage >= productsTotalPages}
-              onClick={() => setProductsPage((p) => Math.min(productsTotalPages, p + 1))}
+              onClick={() => goToProductsPage(productsPage + 1)}
             >
               Sau
             </Button>
@@ -838,7 +905,7 @@ export default function Dashboard() {
                 variant="outline"
                 size="sm"
                 disabled={deletedPage <= 1}
-                onClick={() => setDeletedPage((p) => Math.max(1, p - 1))}
+                onClick={() => goToDeletedPage(deletedPage - 1)}
               >
                 Trước
               </Button>
@@ -849,7 +916,7 @@ export default function Dashboard() {
                 variant="outline"
                 size="sm"
                 disabled={deletedPage >= deletedTotalPages}
-                onClick={() => setDeletedPage((p) => Math.min(deletedTotalPages, p + 1))}
+                onClick={() => goToDeletedPage(deletedPage + 1)}
               >
                 Sau
               </Button>

@@ -1,0 +1,19 @@
+[Unit]
+Description=deal.codayroi.com Next.js (Chotot Deal Finder)
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/deal.codayroi.com/app
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# Bind only localhost — Nginx (Webinoly) terminates TLS and proxies here
+ExecStart=/usr/bin/npm start -- -H 127.0.0.1 -p 3000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
