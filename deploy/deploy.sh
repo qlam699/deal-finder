@@ -10,11 +10,13 @@ SERVICE_NAME="deal-codayroi"
 APP_USER="${APP_USER:-deal}"
 APP_GROUP="${APP_GROUP:-deal}"
 
+# Always run inside APP_PATH as APP_USER.
+# Plain `sudo -u deal npm ci` can lose cwd (sudo jumps to $HOME) → missing package-lock.json.
 run_as_app() {
   if [[ "$(id -un)" == "${APP_USER}" ]]; then
-    "$@"
+    (cd "${APP_PATH}" && "$@")
   elif [[ "${EUID}" -eq 0 ]]; then
-    sudo -u "${APP_USER}" -H -- "$@"
+    sudo -u "${APP_USER}" -H bash -c 'cd "$1" && shift && exec "$@"' bash "${APP_PATH}" "$@"
   else
     echo "ERROR: run as ${APP_USER} or root (sudo bash deploy/deploy.sh)" >&2
     exit 1
@@ -29,19 +31,27 @@ if [[ ! -f package.json ]]; then
   exit 1
 fi
 
+if [[ ! -f package-lock.json ]]; then
+  echo "ERROR: package-lock.json missing in ${APP_PATH} (needed for npm ci)"
+  echo "    ls:"; ls -la "${APP_PATH}" | head -40
+  exit 1
+fi
+
 if [[ -f data.db ]]; then
   echo "==> Keeping existing data.db"
 fi
 
 if [[ "${EUID}" -eq 0 ]]; then
+  # Ensure APP_USER can traverse parents and own the app tree
+  chmod 755 /var/www /var/www/deal.codayroi.com 2>/dev/null || true
   chown -R "${APP_USER}:${APP_GROUP}" "${APP_PATH}" || true
 fi
 
-echo "==> npm ci..."
+echo "==> npm ci (as ${APP_USER} in ${APP_PATH})..."
 run_as_app npm ci
 
 echo "==> Cleaning previous .next build..."
-run_as_app rm -rf "${APP_PATH}/.next"
+run_as_app rm -rf .next
 
 echo "==> npm run build..."
 run_as_app npm run build
