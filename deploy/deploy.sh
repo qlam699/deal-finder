@@ -40,8 +40,21 @@ fi
 echo "==> npm ci..."
 run_as_app npm ci
 
+echo "==> Cleaning previous .next build..."
+run_as_app rm -rf "${APP_PATH}/.next"
+
 echo "==> npm run build..."
 run_as_app npm run build
+
+if [[ ! -f "${APP_PATH}/.next/BUILD_ID" ]]; then
+  echo "ERROR: .next/BUILD_ID missing after build — build failed or incomplete"
+  exit 1
+fi
+if [[ ! -f "${APP_PATH}/.next/server/middleware-manifest.json" ]]; then
+  echo "ERROR: .next/server/middleware-manifest.json missing after build"
+  ls -la "${APP_PATH}/.next/server" 2>/dev/null || true
+  exit 1
+fi
 
 if systemctl list-unit-files "${SERVICE_NAME}.service" 2>/dev/null | grep -q "${SERVICE_NAME}"; then
   echo "==> Restarting ${SERVICE_NAME}..."
