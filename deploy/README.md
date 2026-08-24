@@ -36,7 +36,7 @@ Override runtime owner nếu cần: `APP_USER=... APP_GROUP=... sudo -E bash dep
 Workflow clone + `setup-vps.sh` + `deploy.sh`. Sau đó trên VPS:
 
 ```bash
-sudo site deal.codayroi.com -proxy=127.0.0.1:3000
+sudo site deal.codayroi.com -proxy=[127.0.0.1:3000]
 sudo site deal.codayroi.com -ssl=on
 ```
 

@@ -76,7 +76,7 @@ jobs:
 
           if [ ! -e /etc/nginx/sites-available/deal.codayroi.com ]; then
             echo "WARN: Webinoly site deal.codayroi.com not found — app still deploys on :3000"
-            echo "  sudo site deal.codayroi.com -proxy=127.0.0.1:3000"
+            echo "  sudo site deal.codayroi.com -proxy=[127.0.0.1:3000]"
             echo "  sudo site deal.codayroi.com -ssl=on"
           fi
 

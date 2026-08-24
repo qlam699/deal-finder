@@ -85,7 +85,7 @@ chmod 440 /etc/sudoers.d/deal-codayroi
 echo ""
 echo "==> Setup done. Next steps:"
 echo "  1) sudo bash ${APP_PATH}/deploy/deploy.sh"
-echo "  2) sudo site ${DOMAIN} -proxy=127.0.0.1:3000 && sudo site ${DOMAIN} -ssl=on"
+echo "  2) sudo site ${DOMAIN} -proxy=[127.0.0.1:3000] && sudo site ${DOMAIN} -ssl=on"
 echo "  3) GitHub: VPS_HOST, VPS_USER=root (SSH), VPS_SSH_KEY — not APP_USER=${APP_USER}"
 echo ""
 echo "Logs: journalctl -u ${SERVICE_NAME} -f"
