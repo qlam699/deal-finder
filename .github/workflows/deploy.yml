@@ -66,11 +66,11 @@ jobs:
           sudo git -C "$APP_DIR" checkout "$BRANCH"
           sudo git -C "$APP_DIR" reset --hard "origin/$BRANCH"
 
-          if [ ! -f /etc/systemd/system/deal-codayroi.service ]; then
-            echo "==> setup-vps.sh (first time — wipes data.db)"
+          # Run setup if unit missing OR runtime user missing (stale unit from older deploys)
+          if [ ! -f /etc/systemd/system/deal-codayroi.service ] || ! id -u deal >/dev/null 2>&1; then
+            echo "==> setup-vps.sh (creates APP_USER=deal + unit; wipes data.db if first/clean setup)"
             sudo bash "$APP_DIR/deploy/setup-vps.sh"
           else
-            # Runtime owner = APP_USER:APP_GROUP (default deal:deal), not VPS_USER
             sudo chown -R deal:deal "$APP_DIR" || true
           fi
 
