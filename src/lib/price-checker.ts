@@ -114,16 +114,17 @@ async function checkWithGroq(
     ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo, listingPrice)}`
     : PRICE_PROMPT(sellerInfo, listingPrice);
 
-  const response = await client.chat.completions.create({
+  const response = (await client.chat.completions.create({
     model: "qwen/qwen3.6-27b",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.1,
     max_completion_tokens: 1024,
+    stream: false,
     // Disable thinking mode so response is clean JSON (Groq Qwen3.6).
     reasoning_effort: "none",
   } as Parameters<typeof client.chat.completions.create>[0] & {
     reasoning_effort?: string;
-  });
+  })) as { choices: Array<{ message?: { content?: string | null } }> };
 
   const text = response.choices[0]?.message?.content || "";
   const parsed = parseAIResponse(text, listingPrice);

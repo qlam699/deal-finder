@@ -2,33 +2,85 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  # Smoke-check on CI — production build runs again on VPS (native better-sqlite3)
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || '22' }}
-          script_stop: true
-          command_timeout: 25m
-          script: |
-            set -euo pipefail
-            APP_PATH='${{ secrets.VPS_APP_PATH }}'
-            if [ -z "${APP_PATH}" ]; then
-              APP_PATH="/var/www/deal.codayroi.com/app"
+        env:
+          SSH_HOST: ${{ secrets.VPS_HOST }}
+          SSH_USER: ${{ secrets.VPS_USER }}
+        run: |
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ]; then
+            echo "Missing VPS_HOST or VPS_USER"
+            exit 1
+          fi
+          # Same pattern as bacpq: SSH as the user that has the key (often root), then sudo on VPS
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+            "$SSH_USER@$SSH_HOST" \
+            "export BRANCH='${{ github.ref_name }}' REPO='https://github.com/${{ github.repository }}.git'; bash -s" << 'EOF'
+          set -euo pipefail
+
+          APP_DIR=/var/www/deal.codayroi.com/app
+
+          if [ ! -d "$APP_DIR/.git" ]; then
+            echo "==> Clone $APP_DIR"
+            sudo mkdir -p /var/www/deal.codayroi.com
+            if [ -e "$APP_DIR" ]; then
+              sudo rm -rf "$APP_DIR"
             fi
-            cd "${APP_PATH}"
-            git fetch origin main
-            git reset --hard origin/main
-            bash deploy/deploy.sh
+            sudo git clone -b "$BRANCH" "$REPO" "$APP_DIR"
+          fi
+
+          echo "==> git sync $BRANCH"
+          sudo git -C "$APP_DIR" fetch origin
+          sudo git -C "$APP_DIR" checkout "$BRANCH"
+          sudo git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+
+          if [ ! -f /etc/systemd/system/deal-codayroi.service ]; then
+            echo "==> setup-vps.sh (first time — wipes data.db)"
+            sudo bash "$APP_DIR/deploy/setup-vps.sh"
+          else
+            # Runtime owner = APP_USER:APP_GROUP (default deal:deal), not VPS_USER
+            sudo chown -R deal:deal "$APP_DIR" || true
+          fi
+
+          if [ ! -e /etc/nginx/sites-available/deal.codayroi.com ]; then
+            echo "WARN: Webinoly site deal.codayroi.com not found — app still deploys on :3000"
+            echo "  sudo site deal.codayroi.com -proxy=127.0.0.1:3000"
+            echo "  sudo site deal.codayroi.com -ssl=on"
+          fi
+
+          echo "==> deploy.sh"
+          sudo bash "$APP_DIR/deploy/deploy.sh"
+          EOF

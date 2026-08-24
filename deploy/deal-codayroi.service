@@ -4,8 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=deploy
-Group=deploy
+# Placeholders filled by setup-vps.sh (APP_USER / APP_GROUP, default deal:deal)
+User=@APP_USER@
+Group=@APP_GROUP@
 WorkingDirectory=/var/www/deal.codayroi.com/app
 Environment=NODE_ENV=production
 Environment=PORT=3000
