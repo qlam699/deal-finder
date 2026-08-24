@@ -54,11 +54,10 @@ jobs:
           APP_DIR=/var/www/deal.codayroi.com/app
 
           if [ ! -d "$APP_DIR/.git" ]; then
-            echo "==> Clone $APP_DIR"
-            sudo mkdir -p /var/www/deal.codayroi.com
-            if [ -e "$APP_DIR" ]; then
-              sudo rm -rf "$APP_DIR"
-            fi
+            echo "==> Clone $APP_DIR (path exists but is not a git repo — reset)"
+            sudo mkdir -p "$(dirname "$APP_DIR")"
+            # Always remove leftover non-git dir (failed prior setup, empty folder, etc.)
+            sudo rm -rf "$APP_DIR"
             sudo git clone -b "$BRANCH" "$REPO" "$APP_DIR"
           fi
 
