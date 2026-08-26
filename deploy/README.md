@@ -1,60 +1,78 @@
-# Deploy — deal.codayroi.com (Webinoly + systemd + GitHub Actions)
+# Deploy — deal.codayroi.com (same pattern as bacpq)
 
-Production: **https://deal.codayroi.com**  
-Stack: Nginx (Webinoly) → Next.js `127.0.0.1:3000` (systemd) → SQLite `data.db`
+Stack: Webinoly Nginx → Next.js `127.0.0.1:3000` (systemd `deal-codayroi`) → SQLite.
 
-## Two different “users” (do not mix)
+| Path | Role |
+|---|---|
+| **`VPS_USER`** | SSH from GitHub Actions (`root`, same as bacpq) |
+| **`APP_USER=deal`** | systemd process owner |
+| **`APP_DIR`** | `/var/www/deal.codayroi.com/app` — wiped each release |
+| **`DATA_DIR`** | `/var/lib/deal` — `data.db` kept across deploys |
 
-| Name | Role | Example |
-|---|---|---|
-| **`VPS_USER`** | SSH vào VPS từ GitHub Actions | `root` (giống bacpq) |
-| **`APP_USER` / `APP_GROUP`** | Linux chạy process Next + sở hữu file app | `deal` / `deal` |
+## How deploy works (like bacpq)
 
-CI SSH bằng `VPS_USER` + `sudo`. App chạy bằng `APP_USER` (systemd `User=`).
+1. GitHub Actions: `npm ci` + `npm run build` on `ubuntu-latest`
+2. Pack `deal-release.tar.gz` (`.next`, production `node_modules`, …)
+3. SCP → VPS `/tmp/deal-release.tar.gz`
+4. `scripts/deploy.sh --release` → wipe `APP_DIR` → extract → `systemctl restart`
+5. **No** `git clone` / `npm run build` on the VPS
 
 ## Files
 
 | Path | Purpose |
 |---|---|
-| [`deploy/deal-codayroi.service`](./deal-codayroi.service) | systemd (`User=@APP_USER@` → `deal`) |
-| [`deploy/setup-vps.sh`](./setup-vps.sh) | Bootstrap; tạo `APP_USER`/`APP_GROUP`; **xóa** `data.db` |
-| [`deploy/deploy.sh`](./deploy.sh) | `npm ci` + build + restart; **giữ** `data.db` |
-| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | Push → SSH → setup (lần đầu) → `deploy.sh` |
+| [`scripts/setup-vps-webinoly.sh`](../scripts/setup-vps-webinoly.sh) | First boot: Node, user `deal`, unit, Webinoly proxy+SSL |
+| [`scripts/deploy.sh`](../scripts/deploy.sh) | `--release` extract + restart |
+| [`deploy/deal-codayroi.service`](./deal-codayroi.service) | systemd (`__APP_DIR__` filled by scripts) |
+| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | build artifact → SCP → deploy |
 
-Override runtime owner nếu cần: `APP_USER=... APP_GROUP=... sudo -E bash deploy/setup-vps.sh`
-
-## GitHub Secrets (SSH — reuse bacpq)
+## GitHub Secrets
 
 | Secret | Value |
 |---|---|
 | `VPS_HOST` | Same as bacpq |
-| `VPS_USER` | `root` (SSH), **không** phải `deal` |
-| `VPS_SSH_KEY` | Private key `bacpq/bacpq-deploy` |
+| `VPS_USER` | `root` (same as bacpq) |
+| `VPS_SSH_KEY` | Same private key as bacpq (`bacpq-deploy`) |
 
-## One-time / first Actions run
+## First time on VPS
 
-Workflow clone + `setup-vps.sh` + `deploy.sh`. Sau đó trên VPS:
+DNS: A `deal.codayroi.com` → VPS IP. Webinoly already installed.
 
-```bash
-sudo site deal.codayroi.com -proxy=[127.0.0.1:3000]
-sudo site deal.codayroi.com -ssl=on
-```
+Push `main` (or Actions → Run workflow). First run seeds `APP_DIR` + `setup-vps-webinoly.sh` (creates proxy + SSL).
 
-Nếu lần trước tạo nhầm user `deploy` (không có group):
+Manual:
 
 ```bash
-sudo groupadd deal || true
-sudo useradd -m -s /bin/bash -g deal deal || true
-# hoặc xóa user deploy cũ nếu không dùng: sudo userdel -r deploy
+# After SCP of tarball (or from a failed mid-run):
+sudo mkdir -p /var/www/deal.codayroi.com/app
+sudo tar -xzf /tmp/deal-release.tar.gz -C /var/www/deal.codayroi.com/app
+sudo bash /var/www/deal.codayroi.com/app/scripts/setup-vps-webinoly.sh
+sudo env APP_DIR=/var/www/deal.codayroi.com/app \
+  bash /var/www/deal.codayroi.com/app/scripts/deploy.sh --release /tmp/deal-release.tar.gz
 ```
-
-Rồi push code mới và re-run workflow.
 
 ## Ops
 
 ```bash
 sudo systemctl status deal-codayroi
 journalctl -u deal-codayroi -f
-curl -I http://127.0.0.1:3000
-sudo bash /var/www/deal.codayroi.com/app/deploy/deploy.sh
+curl -sI http://127.0.0.1:3000/
+curl -sI https://deal.codayroi.com/
 ```
+
+Backup DB:
+
+```bash
+sudo sqlite3 /var/lib/deal/data.db ".backup /root/deal-$(date +%F).db"
+```
+
+## HTTPS 301 loop
+
+Usually a **duplicate empty Certbot `:443` server** next to the Webinoly SSL+proxy block. Inspect:
+
+```bash
+sudo grep -nE 'listen|server_name|return 301|Certbot|proxy.conf' \
+  /etc/nginx/sites-available/deal.codayroi.com
+```
+
+Keep one HTTP→HTTPS redirect block and one HTTPS block that includes `apps.d/deal.codayroi.com-proxy.conf` (and has `proxy_set_header Host` / `X-Forwarded-Proto` **uncommented**). Remove empty Certbot-only `:443` blocks, then `sudo nginx -t && sudo systemctl reload nginx`.

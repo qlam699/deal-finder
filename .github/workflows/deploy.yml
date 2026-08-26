@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Smoke-check on CI — production build runs again on VPS (native better-sqlite3)
+  # Build on CI (linux amd64) — ship artifact; VPS does not npm build (like bacpq)
   build:
     runs-on: ubuntu-latest
     steps:
@@ -22,12 +22,37 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Production node_modules
+        run: rm -rf node_modules && npm ci --omit=dev
+      - name: Pack release
+        run: |
+          tar -czf deal-release.tar.gz \
+            .next \
+            node_modules \
+            public \
+            package.json \
+            package-lock.json \
+            next.config.ts \
+            tsconfig.json \
+            postcss.config.mjs \
+            deploy \
+            scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deal-release
+          path: deal-release.tar.gz
+          retention-days: 7
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deal-release
+          path: release
+
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
@@ -36,7 +61,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Deploy over SSH
+      - name: Copy release to VPS
         env:
           SSH_HOST: ${{ secrets.VPS_HOST }}
           SSH_USER: ${{ secrets.VPS_USER }}
@@ -45,41 +70,51 @@ jobs:
             echo "Missing VPS_HOST or VPS_USER"
             exit 1
           fi
-          # Same pattern as bacpq: SSH as the user that has the key (often root), then sudo on VPS
+          scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+            release/deal-release.tar.gz \
+            "$SSH_USER@$SSH_HOST:/tmp/deal-release.tar.gz"
+
+      - name: Deploy on VPS
+        env:
+          SSH_HOST: ${{ secrets.VPS_HOST }}
+          SSH_USER: ${{ secrets.VPS_USER }}
+        run: |
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ]; then
+            echo "Missing VPS_HOST or VPS_USER"
+            exit 1
+          fi
           ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
             "$SSH_USER@$SSH_HOST" \
-            "export BRANCH='${{ github.ref_name }}' REPO='https://github.com/${{ github.repository }}.git'; bash -s" << 'EOF'
+            bash -s << 'EOF'
           set -euo pipefail
 
+          RELEASE=/tmp/deal-release.tar.gz
+          UNPACK=/tmp/deal-unpack
           APP_DIR=/var/www/deal.codayroi.com/app
 
-          if [ ! -d "$APP_DIR/.git" ]; then
-            echo "==> Clone $APP_DIR (path exists but is not a git repo — reset)"
-            sudo mkdir -p "$(dirname "$APP_DIR")"
-            # Always remove leftover non-git dir (failed prior setup, empty folder, etc.)
+          rm -rf "$UNPACK"
+          mkdir -p "$UNPACK"
+          tar -xzf "$RELEASE" -C "$UNPACK"
+
+          if [ ! -f /etc/systemd/system/deal-codayroi.service ]; then
+            echo "==> First-time: seed APP_DIR + setup-vps-webinoly.sh"
+            sudo mkdir -p /var/www/deal.codayroi.com
             sudo rm -rf "$APP_DIR"
-            sudo git clone -b "$BRANCH" "$REPO" "$APP_DIR"
-          fi
-
-          echo "==> git sync $BRANCH"
-          sudo git -C "$APP_DIR" fetch origin
-          sudo git -C "$APP_DIR" checkout "$BRANCH"
-          sudo git -C "$APP_DIR" reset --hard "origin/$BRANCH"
-
-          # Run setup if unit missing OR runtime user missing (stale unit from older deploys)
-          if [ ! -f /etc/systemd/system/deal-codayroi.service ] || ! id -u deal >/dev/null 2>&1; then
-            echo "==> setup-vps.sh (creates APP_USER=deal + unit; wipes data.db if first/clean setup)"
-            sudo bash "$APP_DIR/deploy/setup-vps.sh"
-          else
-            sudo chown -R deal:deal "$APP_DIR" || true
+            sudo mkdir -p "$APP_DIR"
+            sudo tar -xzf "$RELEASE" -C "$APP_DIR"
+            sudo bash "$APP_DIR/scripts/setup-vps-webinoly.sh"
           fi
 
           if [ ! -e /etc/nginx/sites-available/deal.codayroi.com ]; then
-            echo "WARN: Webinoly site deal.codayroi.com not found — app still deploys on :3000"
+            echo "WARN: site deal.codayroi.com missing — app still on :3000"
             echo "  sudo site deal.codayroi.com -proxy=[127.0.0.1:3000]"
             echo "  sudo site deal.codayroi.com -ssl=on"
           fi
 
-          echo "==> deploy.sh"
-          sudo bash "$APP_DIR/deploy/deploy.sh"
+          echo "==> deploy.sh --release"
+          sudo env APP_DIR="$APP_DIR" \
+            bash "$UNPACK/scripts/deploy.sh" --release "$RELEASE"
+
+          rm -rf "$UNPACK"
+          rm -f "$RELEASE"
           EOF

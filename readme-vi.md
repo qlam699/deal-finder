@@ -32,7 +32,7 @@
 
 ### 1.4 Deploy production
 
-Xem **[deploy/README.md](./deploy/README.md)** — VPS Webinoly + systemd, GitHub Actions push `main`. Domain: `https://deal.codayroi.com`.
+Xem **[deploy/README.md](./deploy/README.md)** — VPS Webinoly + systemd. CI build artifact + SCP (kiểu bacpq), không `npm build` trên VPS. Domain: `https://deal.codayroi.com`.
 
 ---
 

@@ -1,4 +1,5 @@
 # Shell scripts must use LF on Linux VPS
 deploy/*.sh text eol=lf
 deploy/*.service text eol=lf
+scripts/*.sh text eol=lf
 .github/workflows/* text eol=lf

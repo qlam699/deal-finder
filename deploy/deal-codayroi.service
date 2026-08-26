@@ -4,17 +4,17 @@ After=network.target
 
 [Service]
 Type=simple
-# Placeholders filled by setup-vps.sh (APP_USER / APP_GROUP, default deal:deal)
-User=@APP_USER@
-Group=@APP_GROUP@
-WorkingDirectory=/var/www/deal.codayroi.com/app
+User=deal
+Group=deal
+WorkingDirectory=__APP_DIR__
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+Environment=DATA_DIR=/var/lib/deal
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-# Bind only localhost — Nginx (Webinoly) terminates TLS and proxies here
 ExecStart=/usr/bin/npm start -- -H 127.0.0.1 -p 3000
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

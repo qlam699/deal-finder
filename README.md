@@ -32,7 +32,7 @@
 
 ### 1.4 Production deploy
 
-See **[deploy/README.md](./deploy/README.md)** for VPS (Webinoly + systemd) and GitHub Actions (`main` → SSH deploy). Domain: `https://deal.codayroi.com`.
+See **[deploy/README.md](./deploy/README.md)** for VPS (Webinoly + systemd). CI builds a release tarball and SCPs it (same pattern as bacpq) — no `npm build` on the VPS. Domain: `https://deal.codayroi.com`.
 
 ---
 
