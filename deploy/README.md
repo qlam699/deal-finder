@@ -66,13 +66,12 @@ Backup DB:
 sudo sqlite3 /var/lib/deal/data.db ".backup /root/deal-$(date +%F).db"
 ```
 
-## HTTPS 301 loop
-
-Usually a **duplicate empty Certbot `:443` server** next to the Webinoly SSL+proxy block. Inspect:
+## HTTPS 301 loop / ERR_TOO_MANY_REDIRECTS
 
 ```bash
-sudo grep -nE 'listen|server_name|return 301|Certbot|proxy.conf' \
-  /etc/nginx/sites-available/deal.codayroi.com
+curl -sI http://127.0.0.1:3000/          # must be 200
+sudo bash /var/www/deal.codayroi.com/app/scripts/fix-nginx-site.sh
+curl -sI https://deal.codayroi.com/      # must be 200 + X-Powered-By: Next.js
 ```
 
-Keep one HTTP→HTTPS redirect block and one HTTPS block that includes `apps.d/deal.codayroi.com-proxy.conf` (and has `proxy_set_header Host` / `X-Forwarded-Proto` **uncommented**). Remove empty Certbot-only `:443` blocks, then `sudo nginx -t && sudo systemctl reload nginx`.
+Script writes one HTTP→HTTPS block + one HTTPS→proxy block (removes duplicate empty Certbot `:443`).
