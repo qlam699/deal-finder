@@ -607,10 +607,27 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleToggleCron}>
+          <Button
+            variant="outline"
+            onClick={handleToggleCron}
+            disabled={!cronRunning && apiKeys.length === 0}
+            title={
+              !cronRunning && apiKeys.length === 0
+                ? "Thêm ít nhất 1 API key trước khi bật quét định kỳ"
+                : undefined
+            }
+          >
             {cronRunning ? "Tắt quét định kỳ" : "Bật quét định kỳ (10p)"}
           </Button>
-          <Button onClick={handleScrape} disabled={scraping}>
+          <Button
+            onClick={handleScrape}
+            disabled={scraping || apiKeys.length === 0}
+            title={
+              apiKeys.length === 0
+                ? "Thêm ít nhất 1 API key trước khi quét"
+                : undefined
+            }
+          >
             {scraping ? "Đang quét ngầm..." : "Quét sản phẩm mới"}
           </Button>
         </div>
