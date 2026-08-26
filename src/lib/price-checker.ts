@@ -31,29 +31,37 @@ interface ApiKeyRow {
 const PRICE_PROMPT = (sellerInfo: string, listingPrice: number) =>
   `Bạn đang hỗ trợ người mua máy cũ trên Chợ Tốt để LƯỚT (mua vào → bán ra có lời) tại Việt Nam.
 
-Thông tin tin đăng:
+Thông tin tin đăng (PHẢI đọc kỹ CẢ title lẫn content/mô tả):
 ${sellerInfo}
 Giá người bán đang rao trên Chợ Tốt (listing): ${listingPrice} VND
 
 Hãy ước lượng và trả JSON duy nhất (không markdown):
-1) average = giá thị trường trung bình khi BÁN RA (giá hợp lý người mua lẻ trả).
+1) average = giá thị trường trung bình khi BÁN RA (máy cùng model/cấu hình ở tình trạng TƯƠNG ĐƯƠNG tin này).
 2) recommended_buy_price = giá DEAL MUA VÀO bạn nên thương lượng với seller.
+
+ĐIỀU KIỆN / LỖI TỪ TITLE + MÔ TẢ (bắt buộc trừ giá):
+- Đọc hết title và content. Mọi chi tiết làm máy kém hơn bản “đẹp/fullbox” đều phải làm average và recommended_buy_price THẤP HƠN so với máy lành tương đương.
+- Ví dụ (không giới hạn): hết/pin chai/pin phồng, không pin, sọc/nhám/lóe/cháy màn, màn nứt/cấn, lưng/viền trầy nặng, loa rè, nút liệt, Face ID/Touch ID hỏng, icloud/activation lock, vào nước, máy tháo/ghép linh kiện, thiếu sạc/hộp/phụ kiện, “xác”/chỉ lấy linh kiện, lỗi phần mềm nặng.
+- Mức trừ: lỗi nhẹ (trầy thẩm mỹ) trừ ít; lỗi dùng được nhưng khó bán (sọc màn, pin kém) trừ rõ; lỗi nặng / thiếu linh kiện quan trọng (không pin, màn hỏng nặng) average và deal phải thấp hơn nhiều — không lấy giá máy đẹp làm average.
+- Nếu title/mô tả mâu thuẫn, ưu tiên mô tả chi tiết và giả định xấu hơn (an toàn cho người lướt).
+- Trong "summary" nêu ngắn 1–2 điểm trừ giá đã xét (vd. "sọc màn → trừ deal").
 
 RÀNG BUỘC BẮT BUỘC cho recommended_buy_price:
 - Phải ≤ giá Chợ Tốt (listing ${listingPrice}). Đây là giá thương lượng mua vào, không phải giá mua tối đa theo thị trường độc lập.
-- Phải thấp hơn average đủ để còn lời hợp lý khi bán lại (không quá đáng với seller).
+- Phải thấp hơn average đủ để còn lời hợp lý khi bán lại (không quá đáng với seller), sau khi đã trừ điều kiện/lỗi ở trên.
 - Ví dụ: listing 12.000.000, average (bán ra) 13.000.000 → recommended_buy_price khoảng 11.000.000 (lời ~2.000.000 nếu bán 13tr).
+- Máy lỗi: listing 8.000.000 nhưng mô tả “không pin / sọc màn” → average phải phản ánh máy lỗi (vd. thấp hơn máy đẹp cùng model), recommended_buy_price ≤ listing và thường thấp hơn nữa để còn biên rủi ro.
 - Nếu listing đã rất thấp so với average, recommended_buy_price vẫn ≤ listing (có thể gần bằng listing hoặc thấp hơn một chút để chốt deal).
 
 Format:
 {
-  "min": <giá thấp nhất thị trường, VND>,
-  "max": <giá cao nhất thị trường, VND>,
-  "average": <giá TB thị trường = giá nên bán ra, VND>,
+  "min": <giá thấp nhất thị trường cùng tình trạng, VND>,
+  "max": <giá cao nhất thị trường cùng tình trạng, VND>,
+  "average": <giá TB bán ra cùng tình trạng, VND>,
   "recommended_buy_price": <giá deal mua vào ≤ listing, VND>,
   "min_gap_percent": <phần trăm (average - recommended_buy_price) / average>,
   "should_buy": <true|false>,
-  "summary": "<1 câu khuyến nghị ngắn gọn>",
+  "summary": "<1 câu: khuyến nghị + điểm trừ giá từ mô tả nếu có>",
   "sources": ["url1", "url2"]
 }
 Nếu không đủ dữ liệu:
