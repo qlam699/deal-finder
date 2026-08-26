@@ -1,5 +1,5 @@
 import { scrapeAllCategories } from "@/lib/scraper";
-import { getProductsByIds, getUncheckedProducts, getDb } from "@/lib/db";
+import { getProductsByIds, getDb } from "@/lib/db";
 import { checkPrice } from "@/lib/price-checker";
 
 export type JobStatus = {
@@ -64,7 +64,6 @@ function extractSellerDescription(product: { content?: string | null; raw_json?:
 }
 
 export async function runScrapeJob(opts?: {
-  priceLimit?: number;
   mode?: "once" | "cron";
 }): Promise<void> {
   if (jobRunning) {
@@ -83,19 +82,12 @@ export async function runScrapeJob(opts?: {
   };
   persistStatus();
 
-  const priceLimit = opts?.priceLimit ?? 10;
-  console.log(`[JOB] Started mode=${status.mode} priceLimit=${priceLimit}`);
+  console.log(`[JOB] Started mode=${status.mode}`);
 
   try {
     const scrapeResult = await scrapeAllCategories();
-    // Prefer newly inserted products; fill remaining slots with unchecked backlog (no market price).
-    const newIds = scrapeResult.newProductIds;
-    const newSet = new Set(newIds);
-    const backlog = getUncheckedProducts(priceLimit * 2) as { id: number }[];
-    const backlogIds = backlog.map((p) => p.id).filter((id) => !newSet.has(id));
-    const queueIds = [...newIds, ...backlogIds].slice(0, priceLimit);
-
-    const toPrice = getProductsByIds(queueIds) as {
+    // AI pricing = đúng số tin mới lấy được từ Chợ Tốt trong lượt này (không cap, không backlog).
+    const toPrice = getProductsByIds(scrapeResult.newProductIds) as {
       id: number;
       title: string;
       price: number;
@@ -104,7 +96,7 @@ export async function runScrapeJob(opts?: {
     }[];
 
     console.log(
-      `[JOB] New products this run=${scrapeResult.newProductIds.length}, AI queue=${toPrice.length}`,
+      `[JOB] Fetched new from Chotot=${scrapeResult.newProductIds.length}, AI queue=${toPrice.length}`,
     );
 
     let priceChecked = 0;
@@ -146,7 +138,7 @@ export function startCron(intervalMinutes = 10): JobStatus {
   cronIntervalMinutes = minutes;
   cronInterval = setInterval(
     () => {
-      void runScrapeJob({ priceLimit: 10, mode: "cron" });
+      void runScrapeJob({ mode: "cron" });
     },
     minutes * 60 * 1000,
   );
@@ -158,7 +150,7 @@ export function startCron(intervalMinutes = 10): JobStatus {
   console.log(`[JOB] Cron started intervalMinutes=${minutes}`);
 
   // Run immediately in background
-  void runScrapeJob({ priceLimit: 10, mode: "cron" });
+  void runScrapeJob({ mode: "cron" });
   return getJobStatus();
 }
 

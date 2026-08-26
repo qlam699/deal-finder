@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     }
 
     // Fire-and-forget: response returns immediately, work continues on server.
-    void runScrapeJob({ priceLimit: 10, mode: "once" });
+    void runScrapeJob({ mode: "once" });
 
     return NextResponse.json({
       success: true,
