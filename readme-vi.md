@@ -133,7 +133,7 @@ Timezone: dùng `datetime('now', 'localtime')` / parse `+07:00` (giờ VN).
 | `chotot_category_id` | TEXT | Mã `cg` Chợ Tốt (vd: `5010`) |
 | `enabled` | INTEGER | 1 = đang theo dõi |
 
-Seed mặc định: Điện thoại (`5010`), Laptop (`5020`), Máy tính bảng (`5030`).
+Seed mặc định: Điện thoại (`5010`), Laptop (`5030`), Máy tính bảng (`5040`).
 
 ### 5.3 `products`
 

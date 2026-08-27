@@ -155,8 +155,22 @@ function initSchema() {
   if (count.c === 0) {
     const insert = d.prepare("INSERT INTO categories (name, chotot_category_id, enabled) VALUES (?, ?, 1)");
     insert.run("Điện thoại", "5010");
-    insert.run("Laptop", "5020");
-    insert.run("Máy tính bảng", "5030");
+    insert.run("Laptop", "5030");
+    insert.run("Máy tính bảng", "5040");
+  }
+
+  // Fix wrong historical seed: 5020=Tivi/Âm thanh, 5030=Laptop, 5040=Máy tính bảng
+  const catFixed = d.prepare("SELECT value FROM settings WHERE key = 'chotot_cg_ids_fixed'").get() as
+    | { value: string }
+    | undefined;
+  if (!catFixed) {
+    d.prepare(
+      "UPDATE categories SET chotot_category_id = '5030' WHERE name = 'Laptop' AND chotot_category_id = '5020'",
+    ).run();
+    d.prepare(
+      "UPDATE categories SET chotot_category_id = '5040' WHERE name = 'Máy tính bảng' AND chotot_category_id = '5030'",
+    ).run();
+    d.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('chotot_cg_ids_fixed', '1')").run();
   }
 }
 

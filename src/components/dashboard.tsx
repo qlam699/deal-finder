@@ -997,7 +997,7 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <Label>Mã danh mục Chợ Tốt</Label>
-                      <Input name="chotot_category_id" placeholder="VD: 5010" required />
+                      <Input name="chotot_category_id" placeholder="VD: 5030" required />
                     </div>
                     <Button type="submit">Thêm</Button>
                   </form>

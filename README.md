@@ -133,7 +133,7 @@ Timezone: `datetime('now', 'localtime')` and UI parse with `+07:00` (Vietnam tim
 | `chotot_category_id` | TEXT | Chợ Tốt `cg` id (e.g. `5010`) |
 | `enabled` | INTEGER | 1 = tracking |
 
-Default seed: Phones (`5010`), Laptops (`5020`), Tablets (`5030`).
+Default seed: Phones (`5010`), Laptops (`5030`), Tablets (`5040`).
 
 ### 5.3 `products`
 
