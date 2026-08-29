@@ -882,19 +882,19 @@ export default function Dashboard() {
                             target="_blank"
                             rel="noopener noreferrer"
                             title="Xem trên Chợ Tốt"
-                            className="inline-block rounded transition-opacity hover:opacity-80"
+                            className="inline-block size-24 shrink-0 overflow-hidden rounded transition-opacity hover:opacity-80"
                           >
                             <img
                               src={normalizeImageUrl(p.image)}
                               alt=""
-                              className="w-12 h-12 object-cover rounded"
+                              className="size-24 aspect-square object-cover"
                             />
                           </a>
                         ) : (
                           <img
                             src={normalizeImageUrl(p.image)}
                             alt=""
-                            className="w-12 h-12 object-cover rounded"
+                            className="size-24 aspect-square object-cover rounded"
                           />
                         ))}
                     </TableCell>
