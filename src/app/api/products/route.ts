@@ -18,11 +18,12 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
   const offset = (page - 1) * pageSize;
   const sortBy = searchParams.get("sortBy") || "created_at";
+  const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc";
   const trash = searchParams.get("trash") === "1";
 
   const items = trash
     ? getDeletedProducts({ limit: pageSize, offset })
-    : getProducts({ category, search, limit: pageSize, offset, sortBy });
+    : getProducts({ category, search, limit: pageSize, offset, sortBy, sortOrder });
   const total = trash ? countDeletedProducts() : countProducts(category, search);
 
   return NextResponse.json({

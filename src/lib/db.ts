@@ -253,16 +253,28 @@ export function updateProductPrice(
     .run(marketPrice, dealPrice, profitMargin, id);
 }
 
+const PRODUCT_SORT_COLUMNS: Record<string, string> = {
+  title: "title",
+  category: "category",
+  listed_at: "COALESCE(listed_at, strftime('%s', created_at))",
+  price: "price",
+  deal_price: "deal_price",
+  market_price: "market_price",
+  profit_margin: "profit_margin",
+  created_at: "created_at",
+};
+
 export function getProducts(opts: {
   category?: string;
   search?: string;
   limit?: number;
   offset?: number;
   sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }) {
-  const { category, search, limit = 50, offset = 0, sortBy = "created_at" } = opts;
-  const validSort = ["created_at", "profit_margin", "price"].includes(sortBy) ? sortBy : "created_at";
-  const dir = "DESC";
+  const { category, search, limit = 50, offset = 0, sortBy = "created_at", sortOrder = "desc" } = opts;
+  const sortColumn = PRODUCT_SORT_COLUMNS[sortBy] ?? PRODUCT_SORT_COLUMNS.created_at;
+  const dir = sortOrder === "asc" ? "ASC" : "DESC";
 
   let sql = "SELECT * FROM products WHERE deleted_at IS NULL";
   const params: unknown[] = [];
@@ -278,7 +290,7 @@ export function getProducts(opts: {
     params.push(like, like);
   }
 
-  sql += ` ORDER BY ${validSort} ${dir} LIMIT ? OFFSET ?`;
+  sql += ` ORDER BY ${sortColumn} ${dir} LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
   return getDb().prepare(sql).all(...params);

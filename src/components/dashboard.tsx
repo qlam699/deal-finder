@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { GripVertical } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, GripVertical } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -115,6 +115,49 @@ function formatDateTime(value: string | number): string {
   return `${year} năm trước`;
 }
 
+type SortOrder = "asc" | "desc";
+
+function SortableTableHead({
+  label,
+  column,
+  sortBy,
+  sortOrder,
+  onSort,
+  className,
+}: {
+  label: string;
+  column: string;
+  sortBy: string;
+  sortOrder: SortOrder;
+  onSort: (column: string) => void;
+  className?: string;
+}) {
+  const isActive = sortBy === column;
+  const isRight = className?.includes("text-right");
+  return (
+    <TableHead className={className}>
+      <div className={isRight ? "flex justify-end" : undefined}>
+        <button
+          type="button"
+          onClick={() => onSort(column)}
+          className="inline-flex items-center gap-1 font-medium hover:text-foreground/80 transition-colors"
+        >
+          {label}
+          {isActive ? (
+            sortOrder === "asc" ? (
+              <ArrowUp className="size-3.5 shrink-0" />
+            ) : (
+              <ArrowDown className="size-3.5 shrink-0" />
+            )
+          ) : (
+            <ArrowUpDown className="size-3.5 shrink-0 opacity-40" />
+          )}
+        </button>
+      </div>
+    </TableHead>
+  );
+}
+
 function normalizeImageUrl(url?: string): string {
   if (!url) return "";
   // Backward-compat for old malformed records in local DB.
@@ -145,6 +188,7 @@ export default function Dashboard() {
   const [jobMessage, setJobMessage] = useState("");
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [newProvider, setNewProvider] = useState("gemini");
@@ -189,6 +233,7 @@ export default function Dashboard() {
   const fetchProducts = useCallback(async () => {
     const params = new URLSearchParams({
       sortBy,
+      sortOrder,
       page: String(productsPage),
       pageSize: String(PAGE_SIZE),
     });
@@ -199,7 +244,20 @@ export default function Dashboard() {
     setProducts(data.items || []);
     setProductsTotalPages(data.totalPages || 1);
     setProductsLoaded(true);
-  }, [filter, sortBy, productsPage, search]);
+  }, [filter, sortBy, sortOrder, productsPage, search]);
+
+  const handleSort = useCallback(
+    (column: string) => {
+      if (sortBy === column) {
+        setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+      } else {
+        setSortBy(column);
+        setSortOrder(column === "title" || column === "category" ? "asc" : "desc");
+      }
+      goToProductsPage(1);
+    },
+    [sortBy, goToProductsPage],
+  );
 
   const fetchDeletedProducts = useCallback(async () => {
     const res = await fetch(`/api/products?trash=1&page=${deletedPage}&pageSize=${PAGE_SIZE}`);
@@ -673,28 +731,6 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
 
-            <Select
-              value={sortBy}
-              onValueChange={(v) => {
-                setSortBy(v || "created_at");
-                goToProductsPage(1);
-              }}
-            >
-              <SelectTrigger className="w-48">
-                <SelectValue>
-                  {sortBy === "profit_margin"
-                    ? "% Lời cao nhất"
-                    : sortBy === "price"
-                      ? "Giá"
-                      : "Mới nhất"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="created_at">Mới nhất</SelectItem>
-                <SelectItem value="profit_margin">% Lời cao nhất</SelectItem>
-                <SelectItem value="price">Giá</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           <div className="rounded-md border">
@@ -702,13 +738,59 @@ export default function Dashboard() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-16">Ảnh</TableHead>
-                  <TableHead>Sản phẩm</TableHead>
-                  <TableHead>Danh mục</TableHead>
-                  <TableHead>Thời gian</TableHead>
-                  <TableHead className="text-right">Giá Chợ Tốt</TableHead>
-                  <TableHead className="text-right">Giá deal mua (AI)</TableHead>
-                  <TableHead className="text-right">Giá thị trường (bán)(AI)</TableHead>
-                  <TableHead className="text-right">Chênh lệch</TableHead>
+                  <SortableTableHead
+                    label="Sản phẩm"
+                    column="title"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Danh mục"
+                    column="category"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Thời gian"
+                    column="listed_at"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Giá Chợ Tốt"
+                    column="price"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Giá deal mua (AI)"
+                    column="deal_price"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Giá thị trường (bán)(AI)"
+                    column="market_price"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Chênh lệch"
+                    column="profit_margin"
+                    sortBy={sortBy}
+                    sortOrder={sortOrder}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
