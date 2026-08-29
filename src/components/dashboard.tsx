@@ -952,9 +952,6 @@ export default function Dashboard() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <a href={p.url} target="_blank" rel="noopener noreferrer">
-                          <Button variant="ghost" size="sm">Xem</Button>
-                        </a>
                         <Button
                           variant="outline"
                           size="sm"
