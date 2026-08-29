@@ -158,6 +158,65 @@ function SortableTableHead({
   );
 }
 
+function ProductTitlePreview({
+  title,
+  content,
+}: {
+  title: string;
+  content?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hoverCapable, setHoverCapable] = useState(false);
+  const description = content?.trim() || "Chưa có nội dung mô tả cho tin này.";
+
+  useEffect(() => {
+    const mq = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const update = () => setHoverCapable(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  const trigger = (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      className="block w-full truncate text-left cursor-pointer underline-offset-2 hover:underline"
+    >
+      {title}
+    </button>
+  );
+
+  return (
+    <>
+      {hoverCapable ? (
+        <Tooltip>
+          <TooltipTrigger render={trigger} />
+          <TooltipContent
+            side="bottom"
+            align="start"
+            className="max-w-md whitespace-pre-wrap break-words text-left leading-relaxed"
+          >
+            {description}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        trigger
+      )}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-left leading-snug">{title}</DialogTitle>
+          </DialogHeader>
+          <p className="whitespace-pre-wrap break-words text-left leading-relaxed text-sm">
+            {description}
+          </p>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function normalizeImageUrl(url?: string): string {
   if (!url) return "";
   // Backward-compat for old malformed records in local DB.
@@ -810,25 +869,31 @@ export default function Dashboard() {
                   return (
                   <TableRow key={p.id} className={p.profit_margin && p.profit_margin > 20 ? "bg-green-50 dark:bg-green-950" : ""}>
                     <TableCell>
-                      {p.image && (
-                        <img src={normalizeImageUrl(p.image)} alt="" className="w-12 h-12 object-cover rounded" />
-                      )}
+                      {p.image &&
+                        (p.url ? (
+                          <a
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Xem trên Chợ Tốt"
+                            className="inline-block rounded transition-opacity hover:opacity-80"
+                          >
+                            <img
+                              src={normalizeImageUrl(p.image)}
+                              alt=""
+                              className="w-12 h-12 object-cover rounded"
+                            />
+                          </a>
+                        ) : (
+                          <img
+                            src={normalizeImageUrl(p.image)}
+                            alt=""
+                            className="w-12 h-12 object-cover rounded"
+                          />
+                        ))}
                     </TableCell>
                     <TableCell className="font-medium max-w-xs">
-                      <Tooltip>
-                        <TooltipTrigger className="block w-full truncate text-left cursor-help">
-                          {p.title}
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="bottom"
-                          align="start"
-                          className="max-w-md whitespace-pre-wrap break-words text-left leading-relaxed"
-                        >
-                          {p.content?.trim()
-                            ? p.content
-                            : "Chưa có nội dung mô tả cho tin này."}
-                        </TooltipContent>
-                      </Tooltip>
+                      <ProductTitlePreview title={p.title} content={p.content} />
                     </TableCell>
                     <TableCell><Badge variant="secondary">{p.category}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
