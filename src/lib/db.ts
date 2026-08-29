@@ -153,10 +153,11 @@ function initSchema() {
   // Seed default categories if empty
   const count = d.prepare("SELECT COUNT(*) as c FROM categories").get() as { c: number };
   if (count.c === 0) {
-    const insert = d.prepare("INSERT INTO categories (name, chotot_category_id, enabled) VALUES (?, ?, 1)");
-    insert.run("Điện thoại", "5010");
-    insert.run("Laptop", "5030");
-    insert.run("Máy tính bảng", "5040");
+    const insert = d.prepare("INSERT INTO categories (name, chotot_category_id, enabled) VALUES (?, ?, ?)");
+    insert.run("Điện thoại", "5010", 1);
+    insert.run("Laptop", "5030", 1);
+    insert.run("Máy tính bảng", "5040", 0);
+    insert.run("Xe đạp", "2060", 0);
   }
 
   // Fix wrong historical seed: 5020=Tivi/Âm thanh, 5030=Laptop, 5040=Máy tính bảng
@@ -171,6 +172,24 @@ function initSchema() {
       "UPDATE categories SET chotot_category_id = '5040' WHERE name = 'Máy tính bảng' AND chotot_category_id = '5030'",
     ).run();
     d.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('chotot_cg_ids_fixed', '1')").run();
+  }
+
+  const xeDapAdded = d.prepare("SELECT value FROM settings WHERE key = 'category_xe_dap_added'").get() as
+    | { value: string }
+    | undefined;
+  if (!xeDapAdded) {
+    d.prepare(
+      "INSERT OR IGNORE INTO categories (name, chotot_category_id, enabled) VALUES ('Xe đạp', '2060', 0)",
+    ).run();
+    d.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('category_xe_dap_added', '1')").run();
+  }
+
+  const defaultEnabled = d.prepare("SELECT value FROM settings WHERE key = 'category_default_enabled_v2'").get() as
+    | { value: string }
+    | undefined;
+  if (!defaultEnabled) {
+    d.prepare("UPDATE categories SET enabled = 0 WHERE name IN ('Máy tính bảng', 'Xe đạp')").run();
+    d.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('category_default_enabled_v2', '1')").run();
   }
 }
 

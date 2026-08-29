@@ -161,9 +161,11 @@ function SortableTableHead({
 function ProductTitlePreview({
   title,
   content,
+  url,
 }: {
   title: string;
   content?: string | null;
+  url: string;
 }) {
   const [open, setOpen] = useState(false);
   const [hoverCapable, setHoverCapable] = useState(false);
@@ -206,7 +208,11 @@ function ProductTitlePreview({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-left leading-snug">{title}</DialogTitle>
+            <DialogTitle className="text-left leading-snug">
+              <a href={url} target="_blank" rel="noopener noreferrer">
+                {title + " - Click xem"}
+              </a>
+            </DialogTitle>
           </DialogHeader>
           <p className="whitespace-pre-wrap break-words text-left leading-relaxed text-sm">
             {description}
@@ -893,7 +899,7 @@ export default function Dashboard() {
                         ))}
                     </TableCell>
                     <TableCell className="font-medium max-w-xs">
-                      <ProductTitlePreview title={p.title} content={p.content} />
+                      <ProductTitlePreview title={p.title} content={p.content} url={p.url} />
                     </TableCell>
                     <TableCell><Badge variant="secondary">{p.category}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">

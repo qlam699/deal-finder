@@ -14,6 +14,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>{children}</body>
+      <footer className="text-center text-sm text-muted-foreground py-4">Deal Finder by QLam &copy; {new Date().getFullYear()}</footer>
     </html>
   );
 }
