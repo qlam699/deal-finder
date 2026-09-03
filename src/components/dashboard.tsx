@@ -802,7 +802,7 @@ export default function Dashboard() {
 
   return (
     <TooltipProvider delay={200}>
-    <main className="container mx-auto p-6 max-w-7xl">
+    <main className="container mx-auto max-w-[1800px] p-6">
       <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Chotot Deal Finder</h1>
