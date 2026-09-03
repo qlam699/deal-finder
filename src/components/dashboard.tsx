@@ -116,6 +116,16 @@ function formatDateTime(value: string | number): string {
 }
 
 type SortOrder = "asc" | "desc";
+type ProductImageView = "small" | "medium" | "large";
+
+const productImageViewClasses: Record<
+  ProductImageView,
+  { column: string; image: string }
+> = {
+  small: { column: "w-16", image: "size-12" },
+  medium: { column: "w-24", image: "size-24" },
+  large: { column: "w-36", image: "size-36" },
+};
 
 function SortableTableHead({
   label,
@@ -254,11 +264,14 @@ export default function Dashboard() {
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [productImageView, setProductImageView] = useState<ProductImageView>("medium");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [newProvider, setNewProvider] = useState("gemini");
   const [addingKey, setAddingKey] = useState(false);
   const [checkingPriceIds, setCheckingPriceIds] = useState<number[]>([]);
+  const [checkingListings, setCheckingListings] = useState(false);
+  const [listingCheckMessage, setListingCheckMessage] = useState("");
   const [reorderingKeys, setReorderingKeys] = useState(false);
   const dragKeyIndex = useRef<number | null>(null);
   const apiKeysOrderRef = useRef<ApiKey[]>([]);
@@ -650,6 +663,54 @@ export default function Dashboard() {
     await fetchDeletedProducts();
   };
 
+  const handleCheckListings = async () => {
+    if (checkingListings) return;
+    setCheckingListings(true);
+    setListingCheckMessage("Đang kiểm tra toàn bộ danh sách...");
+    try {
+      const res = await fetch("/api/products/check-existence", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Không bắt đầu được kiểm tra");
+    } catch (err) {
+      setCheckingListings(false);
+      setListingCheckMessage("");
+      alert(err instanceof Error ? err.message : "Kiểm tra tin thất bại. Thử lại.");
+    }
+  };
+
+  useEffect(() => {
+    if (!checkingListings) return;
+    let cancelled = false;
+    const poll = async () => {
+      const res = await fetch("/api/products/check-existence");
+      const data = (await res.json()) as {
+        running: boolean;
+        checked: number;
+        total: number;
+        deleted: number;
+        lastError: string | null;
+      };
+      if (cancelled) return;
+      if (data.running) {
+        setListingCheckMessage(`Đang kiểm tra ${data.checked}/${data.total || "..."} tin...`);
+      } else {
+        setCheckingListings(false);
+        setListingCheckMessage(
+          data.lastError
+            ? `Kiểm tra lỗi: ${data.lastError}`
+            : `Đã kiểm tra ${data.checked} tin, xóa ${data.deleted} tin không còn tồn tại.`,
+        );
+        await refreshListAjax();
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [checkingListings, refreshListAjax]);
+
   const handleCheckPrice = async (id: number) => {
     if (checkingPriceIds.includes(id)) return;
     priceCheckErrorsShown.current.delete(id);
@@ -766,7 +827,7 @@ export default function Dashboard() {
 
         {/* Products Tab */}
         <TabsContent value="products">
-          <div className="flex flex-wrap gap-4 mb-4">
+          <div className="flex flex-wrap items-center gap-4 mb-4">
             <Input
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
@@ -796,13 +857,49 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
 
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <Select
+                value={productImageView}
+                onValueChange={(value) => setProductImageView(value as ProductImageView)}
+              >
+                <SelectTrigger className="w-36" aria-label="Kích thước ảnh sản phẩm">
+                  <SelectValue>
+                    {productImageView === "small"
+                      ? "Nhỏ"
+                      : productImageView === "large"
+                        ? "Lớn"
+                        : "Vừa"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="small">Nhỏ</SelectItem>
+                  <SelectItem value="medium">Vừa</SelectItem>
+                  <SelectItem value="large">Lớn</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                onClick={() => void handleCheckListings()}
+                disabled={checkingListings}
+                title="Kiểm tra detail link của toàn bộ tin đang có và chuyển tin không còn sống vào thùng rác"
+              >
+                {checkingListings ? "Đang kiểm tra còn hàng..." : "Kiểm tra còn hàng"}
+              </Button>
+              {listingCheckMessage && (
+                <span className="text-sm text-muted-foreground">
+                  {listingCheckMessage}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-16">Ảnh</TableHead>
+                  <TableHead className={productImageViewClasses[productImageView].column}>
+                    Ảnh
+                  </TableHead>
                   <SortableTableHead
                     label="Sản phẩm"
                     column="title"
@@ -872,6 +969,7 @@ export default function Dashboard() {
                 {products.map((p) => {
                   const needsAiPrice = !p.market_price || !p.deal_price;
                   const isChecking = checkingPriceIds.includes(p.id);
+                  const imageClass = productImageViewClasses[productImageView].image;
                   return (
                   <TableRow key={p.id} className={p.profit_margin && p.profit_margin > 20 ? "bg-green-50 dark:bg-green-950" : ""}>
                     <TableCell>
@@ -882,19 +980,19 @@ export default function Dashboard() {
                             target="_blank"
                             rel="noopener noreferrer"
                             title="Xem trên Chợ Tốt"
-                            className="inline-block size-24 shrink-0 overflow-hidden rounded transition-opacity hover:opacity-80"
+                            className={`inline-block ${imageClass} shrink-0 overflow-hidden rounded transition-opacity hover:opacity-80`}
                           >
                             <img
                               src={normalizeImageUrl(p.image)}
                               alt=""
-                              className="size-24 aspect-square object-cover"
+                              className={`${imageClass} aspect-square object-cover`}
                             />
                           </a>
                         ) : (
                           <img
                             src={normalizeImageUrl(p.image)}
                             alt=""
-                            className="size-24 aspect-square object-cover rounded"
+                            className={`${imageClass} aspect-square rounded object-cover`}
                           />
                         ))}
                     </TableCell>

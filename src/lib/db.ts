@@ -315,6 +315,14 @@ export function getProducts(opts: {
   return getDb().prepare(sql).all(...params);
 }
 
+export function getAllActiveProductsForExistenceCheck() {
+  return getDb()
+    .prepare(
+      "SELECT id, url FROM products WHERE deleted_at IS NULL AND url IS NOT NULL AND url != '' ORDER BY id ASC",
+    )
+    .all() as { id: number; url: string }[];
+}
+
 export function countProducts(category?: string, search?: string) {
   let sql = "SELECT COUNT(*) as total FROM products WHERE deleted_at IS NULL";
   const params: unknown[] = [];
