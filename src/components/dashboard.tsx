@@ -117,6 +117,13 @@ function formatDateTime(value: string | number): string {
 
 type SortOrder = "asc" | "desc";
 type ProductImageView = "small" | "medium" | "large";
+type ListingCheckStatus = {
+  running: boolean;
+  checked: number;
+  total: number;
+  deleted: number;
+  lastError: string | null;
+};
 
 const productImageViewClasses: Record<
   ProductImageView,
@@ -356,6 +363,18 @@ export default function Dashboard() {
     setApiKeys(await res.json());
   }, []);
 
+  const fetchListingCheckStatus = useCallback(async () => {
+    const res = await fetch("/api/products/check-existence");
+    const data = (await res.json()) as ListingCheckStatus;
+    setCheckingListings(data.running);
+    if (data.running) {
+      setListingCheckMessage(
+        `Đang kiểm tra ${data.checked}/${data.total || "..."} tin...`,
+      );
+    }
+    return data;
+  }, []);
+
   const fetchJobStatus = useCallback(async () => {
     const res = await fetch("/api/scrape");
     const data = await res.json();
@@ -392,6 +411,7 @@ export default function Dashboard() {
     fetchCategories();
     fetchApiKeys();
     fetchJobStatus();
+    void fetchListingCheckStatus().catch(() => {});
     void fetch("/api/products/check-price")
       .then((r) => r.json())
       .then((data: { pendingIds?: number[] }) => {
@@ -400,7 +420,7 @@ export default function Dashboard() {
         }
       })
       .catch(() => {});
-  }, [fetchProducts, fetchDeletedProducts, fetchApiKeys, fetchJobStatus]);
+  }, [fetchProducts, fetchDeletedProducts, fetchApiKeys, fetchJobStatus, fetchListingCheckStatus]);
 
   // While job/cron is active: poll status + refresh product list via AJAX.
   useEffect(() => {
