@@ -23,16 +23,22 @@ const FETCH_HEADERS = {
 };
 
 function isMissingListing(response: Response, html: string): boolean {
-  if (response.status === 404 || response.status === 410) return true;
+  const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+  if ((response.status === 404 || response.status === 410) && contentType.includes("text/html")) {
+    return true;
+  }
   if (!response.ok) return false;
 
-  const text = html.replace(/\s+/g, " ").toLowerCase();
+  const text = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
   return [
     "tin đăng không còn tồn tại",
     "tin đăng này đã hết hạn",
     "tin đăng đã hết hạn",
-    "tin đăng đã bị ẩn",
-    "tin đăng đã bán",
     "tin này không còn tồn tại",
   ].some((phrase) => text.includes(phrase));
 }

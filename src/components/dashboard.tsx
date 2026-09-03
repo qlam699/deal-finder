@@ -684,7 +684,7 @@ export default function Dashboard() {
   };
 
   const handleCheckListings = async () => {
-    if (checkingListings) return;
+    if (checkingListings || scraping) return;
     setCheckingListings(true);
     setListingCheckMessage("Đang kiểm tra toàn bộ danh sách...");
     try {
@@ -900,8 +900,12 @@ export default function Dashboard() {
               <Button
                 variant="outline"
                 onClick={() => void handleCheckListings()}
-                disabled={checkingListings}
-                title="Kiểm tra detail link của toàn bộ tin đang có và chuyển tin không còn sống vào thùng rác"
+                disabled={checkingListings || scraping}
+                title={
+                  scraping
+                    ? "Vui lòng chờ quét sản phẩm mới hoàn tất"
+                    : "Kiểm tra detail link của toàn bộ tin đang có và chuyển tin không còn sống vào thùng rác"
+                }
               >
                 {checkingListings ? "Đang kiểm tra còn hàng..." : "Kiểm tra còn hàng"}
               </Button>
