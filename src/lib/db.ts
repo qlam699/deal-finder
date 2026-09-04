@@ -46,6 +46,7 @@ function initSchema() {
       profit_margin REAL,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       checked INTEGER NOT NULL DEFAULT 0,
+      published INTEGER NOT NULL DEFAULT 0,
       raw_json TEXT,
       content TEXT,
       deleted_at TEXT
@@ -90,6 +91,23 @@ function initSchema() {
   } catch {
     // Column already exists.
   }
+  try {
+    d.exec("ALTER TABLE products ADD COLUMN published INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    // Column already exists.
+  }
+
+  // Existing rows were already shown on the web — keep them visible.
+  const publishedMigrated = d
+    .prepare("SELECT value FROM settings WHERE key = 'products_published_migrated'")
+    .get() as { value: string } | undefined;
+  if (!publishedMigrated) {
+    d.exec(`
+      UPDATE products SET published = 1 WHERE published = 0;
+      INSERT OR REPLACE INTO settings (key, value) VALUES ('products_published_migrated', '1');
+    `);
+  }
+
   // Older / wrong deal rows: deal phải ≤ giá Chợ Tốt (listing).
   d.exec(`
     UPDATE products
@@ -221,8 +239,8 @@ export function insertProduct(product: {
 
     const result = d
       .prepare(`
-        INSERT OR IGNORE INTO products (chotot_id, title, price, listed_at, category, image, url, content, raw_json)
-        VALUES (@chotot_id, @title, @price, @listed_at, @category, @image, @url, @content, @raw_json)
+        INSERT OR IGNORE INTO products (chotot_id, title, price, listed_at, category, image, url, content, raw_json, published)
+        VALUES (@chotot_id, @title, @price, @listed_at, @category, @image, @url, @content, @raw_json, 0)
       `)
       .run(input);
 
@@ -245,9 +263,19 @@ export function getProductsByIds(ids: number[]) {
     .all(...ids);
 }
 
+/** Pending scrape rows (not shown on web yet) — for interrupted-job recovery. */
+export function getUnpublishedProductIds(): number[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT id FROM products WHERE published = 0 AND deleted_at IS NULL ORDER BY id ASC",
+    )
+    .all() as { id: number }[];
+  return rows.map((r) => r.id);
+}
+
 export function getProductById(id: number) {
   return getDb()
-    .prepare("SELECT * FROM products WHERE id = ? AND deleted_at IS NULL")
+    .prepare("SELECT * FROM products WHERE id = ? AND deleted_at IS NULL AND published = 1")
     .get(id);
 }
 
@@ -270,6 +298,42 @@ export function updateProductPrice(
       "UPDATE products SET market_price = ?, deal_price = ?, profit_margin = ?, checked = 1 WHERE id = ?",
     )
     .run(marketPrice, dealPrice, profitMargin, id);
+}
+
+/** Min profit margin (%) vs market to show a scrape result on the web. */
+export const MIN_PUBLISH_MARGIN_PERCENT = 10;
+
+/**
+ * After AI pricing: keep + show if margin > 10%; otherwise hard-delete product row
+ * (seen_products stays so the ad is never scraped again). Never goes to trash.
+ */
+export function publishOrDiscardAfterPriceCheck(
+  id: number,
+): "published" | "discarded" {
+  const row = getDb()
+    .prepare(
+      "SELECT checked, profit_margin, published FROM products WHERE id = ?",
+    )
+    .get(id) as
+    | { checked: number; profit_margin: number | null; published: number }
+    | undefined;
+
+  if (!row) return "discarded";
+
+  const margin = Number(row.profit_margin);
+  const isDeal =
+    row.checked === 1 &&
+    Number.isFinite(margin) &&
+    margin > MIN_PUBLISH_MARGIN_PERCENT;
+
+  if (isDeal) {
+    getDb().prepare("UPDATE products SET published = 1 WHERE id = ?").run(id);
+    return "published";
+  }
+
+  // Reject: remove from products entirely (not trash). seen_products keeps the chotot_id.
+  getDb().prepare("DELETE FROM products WHERE id = ?").run(id);
+  return "discarded";
 }
 
 const PRODUCT_SORT_COLUMNS: Record<string, string> = {
@@ -295,7 +359,7 @@ export function getProducts(opts: {
   const sortColumn = PRODUCT_SORT_COLUMNS[sortBy] ?? PRODUCT_SORT_COLUMNS.created_at;
   const dir = sortOrder === "asc" ? "ASC" : "DESC";
 
-  let sql = "SELECT * FROM products WHERE deleted_at IS NULL";
+  let sql = "SELECT * FROM products WHERE deleted_at IS NULL AND published = 1";
   const params: unknown[] = [];
 
   if (category) {
@@ -318,13 +382,13 @@ export function getProducts(opts: {
 export function getAllActiveProductsForExistenceCheck() {
   return getDb()
     .prepare(
-      "SELECT id, url FROM products WHERE deleted_at IS NULL AND url IS NOT NULL AND url != '' ORDER BY id ASC",
+      "SELECT id, url FROM products WHERE deleted_at IS NULL AND published = 1 AND url IS NOT NULL AND url != '' ORDER BY id ASC",
     )
     .all() as { id: number; url: string }[];
 }
 
 export function countProducts(category?: string, search?: string) {
-  let sql = "SELECT COUNT(*) as total FROM products WHERE deleted_at IS NULL";
+  let sql = "SELECT COUNT(*) as total FROM products WHERE deleted_at IS NULL AND published = 1";
   const params: unknown[] = [];
 
   if (category) {
@@ -345,26 +409,32 @@ export function countProducts(category?: string, search?: string) {
 export function getDeletedProducts(opts: { limit?: number; offset?: number }) {
   const { limit = 50, offset = 0 } = opts;
   return getDb()
-    .prepare("SELECT * FROM products WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+    .prepare(
+      "SELECT * FROM products WHERE deleted_at IS NOT NULL AND published = 1 ORDER BY deleted_at DESC LIMIT ? OFFSET ?",
+    )
     .all(limit, offset);
 }
 
 export function countDeletedProducts() {
   const row = getDb()
-    .prepare("SELECT COUNT(*) as total FROM products WHERE deleted_at IS NOT NULL")
+    .prepare(
+      "SELECT COUNT(*) as total FROM products WHERE deleted_at IS NOT NULL AND published = 1",
+    )
     .get() as { total: number };
   return row.total;
 }
 
 export function softDeleteProduct(id: number) {
   return getDb()
-    .prepare("UPDATE products SET deleted_at = datetime('now', 'localtime') WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "UPDATE products SET deleted_at = datetime('now', 'localtime') WHERE id = ? AND deleted_at IS NULL AND published = 1",
+    )
     .run(id);
 }
 
 export function restoreProduct(id: number) {
   return getDb()
-    .prepare("UPDATE products SET deleted_at = NULL WHERE id = ?")
+    .prepare("UPDATE products SET deleted_at = NULL WHERE id = ? AND published = 1")
     .run(id);
 }
 

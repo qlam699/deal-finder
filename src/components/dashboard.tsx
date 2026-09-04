@@ -271,7 +271,7 @@ export default function Dashboard() {
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
-  const [productImageView, setProductImageView] = useState<ProductImageView>("medium");
+  const [productImageView, setProductImageView] = useState<ProductImageView>("small");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [newProvider, setNewProvider] = useState("gemini");
@@ -383,8 +383,10 @@ export default function Dashboard() {
     if (data.running) {
       setJobMessage("Đang quét ngầm trên server...");
     } else if (data.lastResult) {
+      const published = data.lastResult.published ?? 0;
+      const discarded = data.lastResult.discarded ?? 0;
       setJobMessage(
-        `Lần quét gần nhất: +${data.lastResult.newProducts} tin mới, định giá ${data.lastResult.priceChecked} sản phẩm` +
+        `Lần quét gần nhất: ${data.lastResult.newProducts} tin mới · hiện ${published} deal (>10%) · bỏ ${discarded}` +
           (data.cronRunning ? ` · Cron ${data.intervalMinutes || 10} phút` : ""),
       );
     } else if (data.cronRunning) {
@@ -396,7 +398,12 @@ export default function Dashboard() {
       running?: boolean;
       cronRunning?: boolean;
       lastError?: string | null;
-      lastResult?: { newProducts: number; priceChecked: number } | null;
+      lastResult?: {
+        newProducts: number;
+        priceChecked: number;
+        published?: number;
+        discarded?: number;
+      } | null;
       intervalMinutes?: number | null;
     };
   }, []);

@@ -1,5 +1,10 @@
 import { scrapeAllCategories } from "@/lib/scraper";
-import { getProductsByIds, getDb } from "@/lib/db";
+import {
+  getUnpublishedProductIds,
+  getDb,
+  publishOrDiscardAfterPriceCheck,
+  MIN_PUBLISH_MARGIN_PERCENT,
+} from "@/lib/db";
 import { checkPrice } from "@/lib/price-checker";
 
 export type JobStatus = {
@@ -11,6 +16,8 @@ export type JobStatus = {
     newProducts: number;
     byCategory: Record<string, number>;
     priceChecked: number;
+    published: number;
+    discarded: number;
   } | null;
   mode: "idle" | "once" | "cron";
   cronRunning: boolean;
@@ -86,39 +93,69 @@ export async function runScrapeJob(opts?: {
 
   try {
     const scrapeResult = await scrapeAllCategories();
-    // AI pricing = đúng số tin mới lấy được từ Chợ Tốt trong lượt này (không cap, không backlog).
-    const toPrice = getProductsByIds(scrapeResult.newProductIds) as {
+    // Recover unpublished leftovers from an interrupted previous run.
+    const pendingIds = getUnpublishedProductIds();
+    const queueIds = [...new Set([...scrapeResult.newProductIds, ...pendingIds])];
+
+    const toPrice = getDb()
+      .prepare(
+        queueIds.length === 0
+          ? "SELECT * FROM products WHERE 0"
+          : `SELECT * FROM products WHERE id IN (${queueIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
+      )
+      .all(...queueIds) as {
       id: number;
       title: string;
       price: number;
       content?: string;
       raw_json?: string;
+      checked: number;
     }[];
 
     console.log(
-      `[JOB] Fetched new from Chotot=${scrapeResult.newProductIds.length}, AI queue=${toPrice.length}`,
+      `[JOB] Fetched new from Chotot=${scrapeResult.newProductIds.length}, pending=${pendingIds.length}, AI queue=${toPrice.length} (publish if margin > ${MIN_PUBLISH_MARGIN_PERCENT}%)`,
     );
 
     let priceChecked = 0;
+    let published = 0;
+    let discarded = 0;
+
     for (const product of toPrice) {
-      console.log(`[JOB] price-check product_id=${product.id} title="${product.title}"`);
-      const sellerDescription = extractSellerDescription(product);
-      const success = await checkPrice(
-        product.id,
-        product.title,
-        product.price,
-        sellerDescription,
-      );
-      if (success) priceChecked++;
+      if (!product.checked) {
+        console.log(`[JOB] price-check product_id=${product.id} title="${product.title}"`);
+        const sellerDescription = extractSellerDescription(product);
+        const success = await checkPrice(
+          product.id,
+          product.title,
+          product.price,
+          sellerDescription,
+        );
+        if (success) priceChecked++;
+      }
+
+      const outcome = publishOrDiscardAfterPriceCheck(product.id);
+      if (outcome === "published") {
+        published++;
+        console.log(
+          `[JOB] PUBLISHED product_id=${product.id} (margin > ${MIN_PUBLISH_MARGIN_PERCENT}%)`,
+        );
+      } else {
+        discarded++;
+        console.log(
+          `[JOB] DISCARDED product_id=${product.id} (no deal / margin ≤ ${MIN_PUBLISH_MARGIN_PERCENT}%) — kept in seen_products only`,
+        );
+      }
     }
 
     status.lastResult = {
       newProducts: scrapeResult.total,
       byCategory: scrapeResult.byCategory,
       priceChecked,
+      published,
+      discarded,
     };
     console.log(
-      `[JOB] Done newProducts=${scrapeResult.total} priceChecked=${priceChecked}`,
+      `[JOB] Done newProducts=${scrapeResult.total} priceChecked=${priceChecked} published=${published} discarded=${discarded}`,
     );
   } catch (err) {
     status.lastError = String(err);
