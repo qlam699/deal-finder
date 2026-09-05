@@ -47,6 +47,7 @@ function initSchema() {
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       checked INTEGER NOT NULL DEFAULT 0,
       published INTEGER NOT NULL DEFAULT 0,
+      company_ad INTEGER NOT NULL DEFAULT 0,
       raw_json TEXT,
       content TEXT,
       deleted_at TEXT
@@ -95,6 +96,33 @@ function initSchema() {
     d.exec("ALTER TABLE products ADD COLUMN published INTEGER NOT NULL DEFAULT 0");
   } catch {
     // Column already exists.
+  }
+  try {
+    d.exec("ALTER TABLE products ADD COLUMN company_ad INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    // Column already exists.
+  }
+
+  // Backfill seller type from stored Chợ Tốt payload (company_ad=true → bán chuyên).
+  const sellerBackfill = d
+    .prepare("SELECT value FROM settings WHERE key = 'company_ad_backfilled'")
+    .get() as { value: string } | undefined;
+  if (!sellerBackfill) {
+    const rows = d
+      .prepare("SELECT id, raw_json FROM products WHERE raw_json IS NOT NULL")
+      .all() as { id: number; raw_json: string }[];
+    const upd = d.prepare("UPDATE products SET company_ad = ? WHERE id = ?");
+    for (const row of rows) {
+      try {
+        const raw = JSON.parse(row.raw_json) as { company_ad?: boolean };
+        upd.run(raw.company_ad === true ? 1 : 0, row.id);
+      } catch {
+        // ignore
+      }
+    }
+    d.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('company_ad_backfilled', '1')",
+    ).run();
   }
 
   // Existing rows were already shown on the web — keep them visible.
@@ -222,6 +250,8 @@ export function insertProduct(product: {
   url?: string;
   content?: string;
   raw_json?: string;
+  /** 1 = Bán chuyên (company_ad), 0 = Cá nhân */
+  company_ad?: number;
 }): { changes: number; productId: number | null } {
   const d = getDb();
   const tx = d.transaction((input: typeof product) => {
@@ -239,10 +269,17 @@ export function insertProduct(product: {
 
     const result = d
       .prepare(`
-        INSERT OR IGNORE INTO products (chotot_id, title, price, listed_at, category, image, url, content, raw_json, published)
-        VALUES (@chotot_id, @title, @price, @listed_at, @category, @image, @url, @content, @raw_json, 0)
+        INSERT OR IGNORE INTO products (
+          chotot_id, title, price, listed_at, category, image, url, content, raw_json, published, company_ad
+        )
+        VALUES (
+          @chotot_id, @title, @price, @listed_at, @category, @image, @url, @content, @raw_json, 0, @company_ad
+        )
       `)
-      .run(input);
+      .run({
+        ...input,
+        company_ad: input.company_ad ? 1 : 0,
+      });
 
     return {
       changes: result.changes,
@@ -339,6 +376,7 @@ export function publishOrDiscardAfterPriceCheck(
 const PRODUCT_SORT_COLUMNS: Record<string, string> = {
   title: "title",
   category: "category",
+  company_ad: "company_ad",
   listed_at: "COALESCE(listed_at, strftime('%s', created_at))",
   price: "price",
   deal_price: "deal_price",

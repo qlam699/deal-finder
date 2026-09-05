@@ -54,6 +54,8 @@ interface Product {
   listed_at?: number | null;
   checked: number;
   deleted_at?: string | null;
+  /** 1 = Bán chuyên, 0 = Cá nhân (từ Chợ Tốt company_ad) */
+  company_ad?: number | null;
 }
 
 interface Category {
@@ -267,6 +269,7 @@ export default function Dashboard() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [scraping, setScraping] = useState(false);
   const [cronRunning, setCronRunning] = useState(false);
+  const [scrapeLimit, setScrapeLimit] = useState(5);
   const [jobMessage, setJobMessage] = useState("");
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
@@ -380,6 +383,9 @@ export default function Dashboard() {
     const data = await res.json();
     setScraping(!!data.running);
     setCronRunning(!!data.cronRunning);
+    if (typeof data.scrapeLimit === "number" && data.scrapeLimit > 0) {
+      setScrapeLimit(data.scrapeLimit);
+    }
     if (data.running) {
       setJobMessage("Đang quét ngầm trên server...");
     } else if (data.lastResult) {
@@ -405,6 +411,7 @@ export default function Dashboard() {
         discarded?: number;
       } | null;
       intervalMinutes?: number | null;
+      scrapeLimit?: number | null;
     };
   }, []);
 
@@ -493,6 +500,8 @@ export default function Dashboard() {
   }, [deletedLoaded, deletedPage, deletedTotalPages, goToDeletedPage]);
 
   const handleScrape = async () => {
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
+    setScrapeLimit(limit);
     setScraping(true);
     goToProductsPage(1);
     setSortBy("created_at");
@@ -501,7 +510,7 @@ export default function Dashboard() {
       const res = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ limitPerCategory: limit }),
       });
       const data = await res.json();
       setJobMessage(
@@ -525,10 +534,16 @@ export default function Dashboard() {
         body: JSON.stringify({ action: "stop-cron" }),
       });
     } else {
+      const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
+      setScrapeLimit(limit);
       await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start-cron", intervalMinutes: 10 }),
+        body: JSON.stringify({
+          action: "start-cron",
+          intervalMinutes: 10,
+          limitPerCategory: limit,
+        }),
       });
     }
     await fetchJobStatus();
@@ -817,7 +832,19 @@ export default function Dashboard() {
             <p className="text-sm text-muted-foreground mt-1">{jobMessage}</p>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-sm text-muted-foreground" title="Số tin hợp lệ (>10% chênh lệch) muốn hiện trên list mỗi danh mục mỗi lần quét (1–50). Hệ thống sẽ quét tiếp cho đủ số này.">
+            <span className="whitespace-nowrap">Số tin sẽ quét</span>
+            <Input
+              type="number"
+              min={1}
+              max={50}
+              value={scrapeLimit}
+              onChange={(e) => setScrapeLimit(Number(e.target.value))}
+              disabled={scraping}
+              className="w-16 h-9"
+            />
+          </label>
           <Button
             variant="outline"
             onClick={handleToggleCron}

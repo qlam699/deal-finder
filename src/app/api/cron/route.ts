@@ -5,7 +5,10 @@ export async function POST(request: Request) {
   const body = await request.json();
 
   if (body.action === "start") {
-    const status = startCron(body.intervalMinutes || 10);
+    const status = startCron(
+      body.intervalMinutes || 10,
+      body.limitPerCategory ?? body.scrapeLimit,
+    );
     return NextResponse.json({ status: "started", ...status });
   }
 

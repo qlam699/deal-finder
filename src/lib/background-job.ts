@@ -1,4 +1,4 @@
-import { scrapeAllCategories } from "@/lib/scraper";
+import { scrapeAllCategoriesForDeals, type NewProductCandidate } from "@/lib/scraper";
 import {
   getUnpublishedProductIds,
   getDb,
@@ -22,11 +22,22 @@ export type JobStatus = {
   mode: "idle" | "once" | "cron";
   cronRunning: boolean;
   intervalMinutes: number | null;
+  scrapeLimit: number | null;
 };
 
 let jobRunning = false;
 let cronInterval: ReturnType<typeof setInterval> | null = null;
 let cronIntervalMinutes: number | null = null;
+let cronScrapeLimit = 5;
+
+const DEFAULT_SCRAPE_LIMIT = 5;
+const MAX_SCRAPE_LIMIT = 50;
+
+export function clampScrapeLimit(n: unknown): number {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v)) return DEFAULT_SCRAPE_LIMIT;
+  return Math.min(MAX_SCRAPE_LIMIT, Math.max(1, v));
+}
 
 let status: JobStatus = {
   running: false,
@@ -37,6 +48,7 @@ let status: JobStatus = {
   mode: "idle",
   cronRunning: false,
   intervalMinutes: null,
+  scrapeLimit: null,
 };
 
 function persistStatus() {
@@ -56,6 +68,7 @@ export function getJobStatus(): JobStatus {
     ...status,
     cronRunning: !!cronInterval,
     intervalMinutes: cronIntervalMinutes,
+    scrapeLimit: cronInterval ? cronScrapeLimit : status.scrapeLimit,
   };
 }
 
@@ -70,13 +83,40 @@ function extractSellerDescription(product: { content?: string | null; raw_json?:
   }
 }
 
+async function evaluateProduct(
+  product: NewProductCandidate & { checked?: number },
+): Promise<"published" | "discarded"> {
+  if (!product.checked) {
+    console.log(`[JOB] price-check product_id=${product.id} title="${product.title}"`);
+    const sellerDescription = extractSellerDescription(product);
+    await checkPrice(product.id, product.title, product.price, sellerDescription);
+  }
+
+  const outcome = publishOrDiscardAfterPriceCheck(product.id);
+  if (outcome === "published") {
+    console.log(
+      `[JOB] PUBLISHED product_id=${product.id} (margin > ${MIN_PUBLISH_MARGIN_PERCENT}%)`,
+    );
+  } else {
+    console.log(
+      `[JOB] DISCARDED product_id=${product.id} (no deal / margin ≤ ${MIN_PUBLISH_MARGIN_PERCENT}%) — kept in seen_products only`,
+    );
+  }
+  return outcome;
+}
+
 export async function runScrapeJob(opts?: {
   mode?: "once" | "cron";
+  limitPerCategory?: number;
 }): Promise<void> {
   if (jobRunning) {
     console.log("[JOB] Skip start: already running");
     return;
   }
+
+  const targetPublishedPerCategory = clampScrapeLimit(
+    opts?.limitPerCategory ?? (opts?.mode === "cron" ? cronScrapeLimit : DEFAULT_SCRAPE_LIMIT),
+  );
 
   jobRunning = true;
   status = {
@@ -86,76 +126,58 @@ export async function runScrapeJob(opts?: {
     finishedAt: null,
     lastError: null,
     mode: opts?.mode || "once",
+    scrapeLimit: targetPublishedPerCategory,
   };
   persistStatus();
 
-  console.log(`[JOB] Started mode=${status.mode}`);
+  console.log(
+    `[JOB] Started mode=${status.mode} targetPublishedPerCategory=${targetPublishedPerCategory}`,
+  );
 
   try {
-    const scrapeResult = await scrapeAllCategories();
-    // Recover unpublished leftovers from an interrupted previous run.
-    const pendingIds = getUnpublishedProductIds();
-    const queueIds = [...new Set([...scrapeResult.newProductIds, ...pendingIds])];
-
-    const toPrice = getDb()
-      .prepare(
-        queueIds.length === 0
-          ? "SELECT * FROM products WHERE 0"
-          : `SELECT * FROM products WHERE id IN (${queueIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
-      )
-      .all(...queueIds) as {
-      id: number;
-      title: string;
-      price: number;
-      content?: string;
-      raw_json?: string;
-      checked: number;
-    }[];
-
-    console.log(
-      `[JOB] Fetched new from Chotot=${scrapeResult.newProductIds.length}, pending=${pendingIds.length}, AI queue=${toPrice.length} (publish if margin > ${MIN_PUBLISH_MARGIN_PERCENT}%)`,
-    );
-
     let priceChecked = 0;
     let published = 0;
     let discarded = 0;
 
-    for (const product of toPrice) {
-      if (!product.checked) {
-        console.log(`[JOB] price-check product_id=${product.id} title="${product.title}"`);
-        const sellerDescription = extractSellerDescription(product);
-        const success = await checkPrice(
-          product.id,
-          product.title,
-          product.price,
-          sellerDescription,
-        );
-        if (success) priceChecked++;
-      }
+    // Recover unpublished leftovers from an interrupted previous run.
+    const pendingIds = getUnpublishedProductIds();
+    if (pendingIds.length > 0) {
+      const pending = getDb()
+        .prepare(
+          `SELECT id, title, price, content, raw_json, category, checked FROM products WHERE id IN (${pendingIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
+        )
+        .all(...pendingIds) as (NewProductCandidate & { checked: number })[];
 
-      const outcome = publishOrDiscardAfterPriceCheck(product.id);
-      if (outcome === "published") {
-        published++;
-        console.log(
-          `[JOB] PUBLISHED product_id=${product.id} (margin > ${MIN_PUBLISH_MARGIN_PERCENT}%)`,
-        );
-      } else {
-        discarded++;
-        console.log(
-          `[JOB] DISCARDED product_id=${product.id} (no deal / margin ≤ ${MIN_PUBLISH_MARGIN_PERCENT}%) — kept in seen_products only`,
-        );
+      console.log(`[JOB] Recover pending unpublished=${pending.length}`);
+      for (const product of pending) {
+        const beforeChecked = product.checked;
+        const outcome = await evaluateProduct(product);
+        if (!beforeChecked) priceChecked++;
+        if (outcome === "published") published++;
+        else discarded++;
       }
     }
 
+    const scrapeResult = await scrapeAllCategoriesForDeals(
+      targetPublishedPerCategory,
+      async (product) => {
+        const outcome = await evaluateProduct(product);
+        priceChecked++;
+        if (outcome === "published") published++;
+        else discarded++;
+        return outcome;
+      },
+    );
+
     status.lastResult = {
-      newProducts: scrapeResult.total,
+      newProducts: scrapeResult.totalNew,
       byCategory: scrapeResult.byCategory,
       priceChecked,
       published,
       discarded,
     };
     console.log(
-      `[JOB] Done newProducts=${scrapeResult.total} priceChecked=${priceChecked} published=${published} discarded=${discarded}`,
+      `[JOB] Done newProducts=${scrapeResult.totalNew} priceChecked=${priceChecked} published=${published} discarded=${discarded} byCategory=${JSON.stringify(scrapeResult.byCategory)}`,
     );
   } catch (err) {
     status.lastError = String(err);
@@ -169,25 +191,31 @@ export async function runScrapeJob(opts?: {
   }
 }
 
-export function startCron(intervalMinutes = 10): JobStatus {
+export function startCron(
+  intervalMinutes = 10,
+  limitPerCategory = DEFAULT_SCRAPE_LIMIT,
+): JobStatus {
   const minutes = Math.max(1, intervalMinutes);
+  cronScrapeLimit = clampScrapeLimit(limitPerCategory);
   if (cronInterval) clearInterval(cronInterval);
   cronIntervalMinutes = minutes;
   cronInterval = setInterval(
     () => {
-      void runScrapeJob({ mode: "cron" });
+      void runScrapeJob({ mode: "cron", limitPerCategory: cronScrapeLimit });
     },
     minutes * 60 * 1000,
   );
 
   status.cronRunning = true;
   status.intervalMinutes = minutes;
+  status.scrapeLimit = cronScrapeLimit;
   status.mode = "cron";
   persistStatus();
-  console.log(`[JOB] Cron started intervalMinutes=${minutes}`);
+  console.log(
+    `[JOB] Cron started intervalMinutes=${minutes} targetPublishedPerCategory=${cronScrapeLimit}`,
+  );
 
-  // Run immediately in background
-  void runScrapeJob({ mode: "cron" });
+  void runScrapeJob({ mode: "cron", limitPerCategory: cronScrapeLimit });
   return getJobStatus();
 }
 
@@ -199,6 +227,7 @@ export function stopCron(): JobStatus {
   cronIntervalMinutes = null;
   status.cronRunning = false;
   status.intervalMinutes = null;
+  status.scrapeLimit = null;
   if (!jobRunning) status.mode = "idle";
   persistStatus();
   console.log("[JOB] Cron stopped");
