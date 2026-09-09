@@ -253,11 +253,35 @@ function normalizeImageUrl(url?: string): string {
   return url.replace("https://cdn.chotot.com/unsafe/585x440/https://", "https://");
 }
 
+function formatIntegerWithCommas(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return new Intl.NumberFormat("vi-VN").format(value);
+}
+
+function parseIntegerInput(value: string): number {
+  const digits = value.replace(/[^\d]/g, "");
+  return digits ? Math.max(0, Number(digits)) : 0;
+}
+
 const DEFAULT_SCRAPE_SETTINGS: ScrapeSettingsState = {
   personalOnly: true,
   minPrice: 100000,
   maxPrice: 60000000,
 };
+
+const SCRAPE_SETTINGS_STORAGE_KEY = "deal-finder-scrape-settings";
+
+function readScrapeSettingsFromLocalStorage(): ScrapeSettingsState {
+  if (typeof window === "undefined") return DEFAULT_SCRAPE_SETTINGS;
+
+  try {
+    const raw = window.localStorage.getItem(SCRAPE_SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_SCRAPE_SETTINGS;
+    return normalizeScrapeSettings(JSON.parse(raw) as Partial<ScrapeSettingsState>);
+  } catch {
+    return DEFAULT_SCRAPE_SETTINGS;
+  }
+}
 
 function normalizeScrapeSettings(input?: Partial<ScrapeSettingsState> | null): ScrapeSettingsState {
   const minPrice = Math.max(0, Math.floor(Number(input?.minPrice ?? DEFAULT_SCRAPE_SETTINGS.minPrice)));
@@ -296,7 +320,9 @@ export default function Dashboard() {
   const [cronRunning, setCronRunning] = useState(false);
   const [scrapeLimit, setScrapeLimit] = useState(5);
   const [scrapeSettingsOpen, setScrapeSettingsOpen] = useState(false);
-  const [scrapeSettings, setScrapeSettings] = useState<ScrapeSettingsState>(DEFAULT_SCRAPE_SETTINGS);
+  const [scrapeSettings, setScrapeSettings] = useState<ScrapeSettingsState>(
+    readScrapeSettingsFromLocalStorage,
+  );
   const [savingScrapeSettings, setSavingScrapeSettings] = useState(false);
   const [jobMessage, setJobMessage] = useState("");
   const [filter, setFilter] = useState("");
@@ -319,6 +345,17 @@ export default function Dashboard() {
   useEffect(() => {
     apiKeysOrderRef.current = apiKeys;
   }, [apiKeys]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SCRAPE_SETTINGS_STORAGE_KEY,
+        JSON.stringify(normalizeScrapeSettings(scrapeSettings)),
+      );
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [scrapeSettings]);
 
   const goToProductsPage = useCallback(
     (page: number) => {
@@ -909,62 +946,94 @@ export default function Dashboard() {
                 Cài đặt quét
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="sm:max-w-xl">
               <DialogHeader>
                 <DialogTitle>Cài đặt quét</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4 py-2">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={scrapeSettings.personalOnly}
-                    onChange={(e) =>
-                      setScrapeSettings((prev) => ({
-                        ...prev,
-                        personalOnly: e.target.checked,
-                      }))
-                    }
-                  />
-                  Chỉ quét tin người đăng là cá nhân
-                </label>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="scrape-min-price">Giá tối thiểu</Label>
-                    <Input
-                      id="scrape-min-price"
-                      type="number"
-                      min={0}
-                      value={scrapeSettings.minPrice}
+              <Tabs defaultValue="settings" className="space-y-4">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="settings">Thiết lập</TabsTrigger>
+                  <TabsTrigger value="categories">Danh mục</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="settings" className="space-y-4 py-1">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input
+                      type="checkbox"
+                      checked={scrapeSettings.personalOnly}
                       onChange={(e) =>
                         setScrapeSettings((prev) => ({
                           ...prev,
-                          minPrice: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                          personalOnly: e.target.checked,
                         }))
                       }
                     />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="scrape-max-price">Giá tối đa</Label>
-                    <Input
-                      id="scrape-max-price"
-                      type="number"
-                      min={0}
-                      value={scrapeSettings.maxPrice}
-                      onChange={(e) =>
-                        setScrapeSettings((prev) => ({
-                          ...prev,
-                          maxPrice: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
+                    Chỉ quét tin người đăng là cá nhân
+                  </label>
 
-                <p className="text-xs text-muted-foreground">
-                  Mặc định: chỉ quét tin cá nhân, giá từ 100.000đ đến 60.000.000đ.
-                </p>
-              </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="scrape-min-price">Giá tối thiểu</Label>
+                      <Input
+                        id="scrape-min-price"
+                        type="text"
+                        inputMode="numeric"
+                        value={formatIntegerWithCommas(scrapeSettings.minPrice)}
+                        onChange={(e) =>
+                          setScrapeSettings((prev) => ({
+                            ...prev,
+                            minPrice: parseIntegerInput(e.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="scrape-max-price">Giá tối đa</Label>
+                      <Input
+                        id="scrape-max-price"
+                        type="text"
+                        inputMode="numeric"
+                        value={formatIntegerWithCommas(scrapeSettings.maxPrice)}
+                        onChange={(e) =>
+                          setScrapeSettings((prev) => ({
+                            ...prev,
+                            maxPrice: parseIntegerInput(e.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Mặc định: chỉ quét tin cá nhân, giá từ 100.000đ đến 60.000.000đ.
+                  </p>
+                </TabsContent>
+
+                <TabsContent value="categories" className="space-y-3 py-1">
+                  <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border p-2">
+                    {categories.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Chưa có danh mục nào.</p>
+                    ) : (
+                      categories.map((category) => (
+                        <label
+                          key={category.id}
+                          className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                        >
+                          <span className="text-sm font-medium">{category.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={category.enabled === 1}
+                            onChange={() => {
+                              void handleToggleCategory(category.id, category.enabled === 0);
+                            }}
+                          />
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </TabsContent>
+              </Tabs>
 
               <div className="flex justify-end gap-2 pt-2">
                 <Button
@@ -1014,7 +1083,6 @@ export default function Dashboard() {
       <Tabs defaultValue="products">
         <TabsList>
           <TabsTrigger value="products">Sản phẩm</TabsTrigger>
-          <TabsTrigger value="categories">Danh mục</TabsTrigger>
           <TabsTrigger value="api-keys">API Keys</TabsTrigger>
           <TabsTrigger value="trash">Thùng rác ({deletedTotal})</TabsTrigger>
         </TabsList>
@@ -1385,72 +1453,6 @@ export default function Dashboard() {
               </Button>
             </div>
           </CardContent>
-        </TabsContent>
-
-        {/* Categories Tab */}
-        <TabsContent value="categories">
-          <Card>
-            <CardHeader>
-              <CardTitle>Danh mục theo dõi</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {categories.map((c) => (
-                  <div key={c.id} className="flex items-center justify-between p-3 border rounded">
-                    <div>
-                      <span className="font-medium">{c.name}</span>
-                      <span className="text-muted-foreground ml-2 text-sm">ID: {c.chotot_category_id}</span>
-                    </div>
-                    <Button
-                      variant={c.enabled ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => handleToggleCategory(c.id, !c.enabled)}
-                    >
-                      {c.enabled ? "Đang bật" : "Đã tắt"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-
-              <Dialog>
-                <DialogTrigger>
-                  <Button className="mt-4">Thêm danh mục</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Thêm danh mục mới</DialogTitle>
-                  </DialogHeader>
-                  <form
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      const form = new FormData(e.currentTarget);
-                      await fetch("/api/categories", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          action: "add",
-                          name: form.get("name"),
-                          chotot_category_id: form.get("chotot_category_id"),
-                        }),
-                      });
-                      fetchCategories();
-                    }}
-                    className="space-y-4"
-                  >
-                    <div>
-                      <Label>Tên danh mục</Label>
-                      <Input name="name" placeholder="VD: Điện thoại" required />
-                    </div>
-                    <div>
-                      <Label>Mã danh mục Chợ Tốt</Label>
-                      <Input name="chotot_category_id" placeholder="VD: 5030" required />
-                    </div>
-                    <Button type="submit">Thêm</Button>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* API Keys Tab */}
