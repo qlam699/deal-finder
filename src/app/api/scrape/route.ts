@@ -7,6 +7,11 @@ import {
   stopCron,
   clampScrapeLimit,
 } from "@/lib/background-job";
+import {
+  getScrapeSettings,
+  saveScrapeSettings,
+  type ScrapeSettings,
+} from "@/lib/db";
 
 // Start one-shot background scrape (keeps running after browser closes,
 // as long as `npm run dev` / `npm start` process is still alive).
@@ -17,6 +22,7 @@ export async function POST(request: Request) {
       intervalMinutes?: number;
       limitPerCategory?: number;
       scrapeLimit?: number;
+      settings?: Partial<ScrapeSettings>;
     } = {};
     try {
       body = await request.json();
@@ -27,6 +33,7 @@ export async function POST(request: Request) {
     const limitPerCategory = clampScrapeLimit(
       body.limitPerCategory ?? body.scrapeLimit,
     );
+    const activeSettings = body.settings ? saveScrapeSettings(body.settings) : getScrapeSettings();
 
     if (body.action === "start-cron") {
       const status = startCron(body.intervalMinutes || 10, limitPerCategory);
@@ -48,7 +55,7 @@ export async function POST(request: Request) {
     }
 
     // Fire-and-forget: response returns immediately, work continues on server.
-    void runScrapeJob({ mode: "once", limitPerCategory });
+    void runScrapeJob({ mode: "once", limitPerCategory, settings: activeSettings });
 
     return NextResponse.json({
       success: true,
@@ -63,5 +70,8 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  return NextResponse.json(getJobStatus());
+  return NextResponse.json({
+    ...getJobStatus(),
+    scrapeSettings: getScrapeSettings(),
+  });
 }

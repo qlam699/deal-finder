@@ -16,6 +16,63 @@ export function getDb(): Database.Database {
   return db;
 }
 
+export type ScrapeSettings = {
+  personalOnly: boolean;
+  minPrice: number;
+  maxPrice: number;
+};
+
+export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettings = {
+  personalOnly: true,
+  minPrice: 100000,
+  maxPrice: 60000000,
+};
+
+function normalizeScrapeSettings(input?: Partial<ScrapeSettings> | null): ScrapeSettings {
+  const next: ScrapeSettings = {
+    personalOnly: input?.personalOnly ?? DEFAULT_SCRAPE_SETTINGS.personalOnly,
+    minPrice: Math.max(0, Math.floor(Number(input?.minPrice ?? DEFAULT_SCRAPE_SETTINGS.minPrice))),
+    maxPrice: Math.max(
+      0,
+      Math.floor(Number(input?.maxPrice ?? DEFAULT_SCRAPE_SETTINGS.maxPrice)),
+    ),
+  };
+
+  if (next.maxPrice < next.minPrice) {
+    next.maxPrice = next.minPrice;
+  }
+
+  return next;
+}
+
+export function getScrapeSettings(): ScrapeSettings {
+  const row = getDb()
+    .prepare("SELECT value FROM settings WHERE key = 'scrape_settings'")
+    .get() as { value?: string } | undefined;
+
+  if (!row?.value) {
+    return { ...DEFAULT_SCRAPE_SETTINGS };
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as Partial<ScrapeSettings>;
+    return normalizeScrapeSettings(parsed);
+  } catch {
+    return { ...DEFAULT_SCRAPE_SETTINGS };
+  }
+}
+
+export function saveScrapeSettings(input?: Partial<ScrapeSettings> | null): ScrapeSettings {
+  const next = normalizeScrapeSettings(input);
+  getDb()
+    .prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('scrape_settings', ?)",
+    )
+    .run(JSON.stringify(next));
+
+  return next;
+}
+
 function initSchema() {
   const d = db!;
 

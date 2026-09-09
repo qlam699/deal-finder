@@ -119,6 +119,11 @@ function formatDateTime(value: string | number): string {
 
 type SortOrder = "asc" | "desc";
 type ProductImageView = "small" | "medium" | "large";
+type ScrapeSettingsState = {
+  personalOnly: boolean;
+  minPrice: number;
+  maxPrice: number;
+};
 type ListingCheckStatus = {
   running: boolean;
   checked: number;
@@ -248,6 +253,26 @@ function normalizeImageUrl(url?: string): string {
   return url.replace("https://cdn.chotot.com/unsafe/585x440/https://", "https://");
 }
 
+const DEFAULT_SCRAPE_SETTINGS: ScrapeSettingsState = {
+  personalOnly: true,
+  minPrice: 100000,
+  maxPrice: 60000000,
+};
+
+function normalizeScrapeSettings(input?: Partial<ScrapeSettingsState> | null): ScrapeSettingsState {
+  const minPrice = Math.max(0, Math.floor(Number(input?.minPrice ?? DEFAULT_SCRAPE_SETTINGS.minPrice)));
+  const maxPrice = Math.max(
+    minPrice,
+    Math.max(0, Math.floor(Number(input?.maxPrice ?? DEFAULT_SCRAPE_SETTINGS.maxPrice))),
+  );
+
+  return {
+    personalOnly: !!input?.personalOnly,
+    minPrice,
+    maxPrice,
+  };
+}
+
 export default function Dashboard() {
   const PAGE_SIZE = 10;
   const router = useRouter();
@@ -270,6 +295,9 @@ export default function Dashboard() {
   const [scraping, setScraping] = useState(false);
   const [cronRunning, setCronRunning] = useState(false);
   const [scrapeLimit, setScrapeLimit] = useState(5);
+  const [scrapeSettingsOpen, setScrapeSettingsOpen] = useState(false);
+  const [scrapeSettings, setScrapeSettings] = useState<ScrapeSettingsState>(DEFAULT_SCRAPE_SETTINGS);
+  const [savingScrapeSettings, setSavingScrapeSettings] = useState(false);
   const [jobMessage, setJobMessage] = useState("");
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
@@ -383,6 +411,9 @@ export default function Dashboard() {
     const data = await res.json();
     setScraping(!!data.running);
     setCronRunning(!!data.cronRunning);
+    if (data?.scrapeSettings) {
+      setScrapeSettings(normalizeScrapeSettings(data.scrapeSettings));
+    }
     if (typeof data.scrapeLimit === "number" && data.scrapeLimit > 0) {
       setScrapeLimit(data.scrapeLimit);
     }
@@ -501,7 +532,9 @@ export default function Dashboard() {
 
   const handleScrape = async () => {
     const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
+    const nextSettings = normalizeScrapeSettings(scrapeSettings);
     setScrapeLimit(limit);
+    setScrapeSettings(nextSettings);
     setScraping(true);
     goToProductsPage(1);
     setSortBy("created_at");
@@ -510,7 +543,7 @@ export default function Dashboard() {
       const res = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limitPerCategory: limit }),
+        body: JSON.stringify({ limitPerCategory: limit, settings: nextSettings }),
       });
       const data = await res.json();
       setJobMessage(
@@ -535,7 +568,9 @@ export default function Dashboard() {
       });
     } else {
       const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
+      const nextSettings = normalizeScrapeSettings(scrapeSettings);
       setScrapeLimit(limit);
+      setScrapeSettings(nextSettings);
       await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -543,6 +578,7 @@ export default function Dashboard() {
           action: "start-cron",
           intervalMinutes: 10,
           limitPerCategory: limit,
+          settings: nextSettings,
         }),
       });
     }
@@ -705,6 +741,28 @@ export default function Dashboard() {
     await fetchDeletedProducts();
   };
 
+  const handleSaveScrapeSettings = async () => {
+    const nextSettings = normalizeScrapeSettings(scrapeSettings);
+    setScrapeSettings(nextSettings);
+    setSavingScrapeSettings(true);
+    try {
+      const res = await fetch("/api/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: nextSettings }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Không lưu được cấu hình quét");
+      setScrapeSettings(normalizeScrapeSettings(data.scrapeSettings || nextSettings));
+      setScrapeSettingsOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Lưu cấu hình quét thất bại");
+    } finally {
+      setSavingScrapeSettings(false);
+    }
+  };
+
   const handleCheckListings = async () => {
     if (checkingListings || scraping) return;
     setCheckingListings(true);
@@ -845,6 +903,88 @@ export default function Dashboard() {
               className="w-16 h-9"
             />
           </label>
+          <Dialog open={scrapeSettingsOpen} onOpenChange={setScrapeSettingsOpen}>
+            <DialogTrigger>
+              <Button variant="outline" type="button">
+                Cài đặt quét
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Cài đặt quét</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={scrapeSettings.personalOnly}
+                    onChange={(e) =>
+                      setScrapeSettings((prev) => ({
+                        ...prev,
+                        personalOnly: e.target.checked,
+                      }))
+                    }
+                  />
+                  Chỉ quét tin người đăng là cá nhân
+                </label>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="scrape-min-price">Giá tối thiểu</Label>
+                    <Input
+                      id="scrape-min-price"
+                      type="number"
+                      min={0}
+                      value={scrapeSettings.minPrice}
+                      onChange={(e) =>
+                        setScrapeSettings((prev) => ({
+                          ...prev,
+                          minPrice: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="scrape-max-price">Giá tối đa</Label>
+                    <Input
+                      id="scrape-max-price"
+                      type="number"
+                      min={0}
+                      value={scrapeSettings.maxPrice}
+                      onChange={(e) =>
+                        setScrapeSettings((prev) => ({
+                          ...prev,
+                          maxPrice: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Mặc định: chỉ quét tin cá nhân, giá từ 100.000đ đến 60.000.000đ.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setScrapeSettingsOpen(false)}
+                  disabled={savingScrapeSettings}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void handleSaveScrapeSettings()}
+                  disabled={savingScrapeSettings}
+                >
+                  {savingScrapeSettings ? "Đang lưu..." : "Lưu"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           <Button
             variant="outline"
             onClick={handleToggleCron}

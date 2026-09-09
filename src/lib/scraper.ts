@@ -1,4 +1,8 @@
-import { getEnabledCategories, insertProduct } from "./db";
+import {
+  getEnabledCategories,
+  insertProduct,
+  type ScrapeSettings,
+} from "./db";
 
 const CHOTOT_API = "https://gateway.chotot.com/v1/public/ad-listing";
 /** Chợ Tốt region_v2 — Tp Hồ Chí Minh (verify via loadRegions; 12000 is Hà Nội). */
@@ -49,10 +53,21 @@ async function fetchCategoryPage(
   categoryId: string,
   limit: number,
   offset: number,
+  settings: ScrapeSettings,
 ): Promise<ChototAd[]> {
-  const url =
-    `${CHOTOT_API}?cg=${categoryId}&limit=${limit}&o=${offset}` +
-    `&st=s,k&region_v2=${CHOTOT_REGION_HCM}&f=p`;
+  const params = new URLSearchParams({
+    cg: categoryId,
+    limit: String(limit),
+    o: String(offset),
+    st: "s,k",
+    region_v2: CHOTOT_REGION_HCM,
+  });
+
+  if (settings.personalOnly) {
+    params.set("f", "p");
+  }
+
+  const url = `${CHOTOT_API}?${params.toString()}`;
   console.log(`[SCRAPER] Fetch cg=${categoryId} limit=${limit} o=${offset} url=${url}`);
 
   const res = await fetch(url, {
@@ -111,6 +126,7 @@ export async function fillCategoryPublishedDeals(
   categoryId: string,
   categoryName: string,
   targetPublished: number,
+  settings: ScrapeSettings,
   evaluate: (product: NewProductCandidate) => Promise<"published" | "discarded">,
 ): Promise<{
   published: number;
@@ -120,7 +136,7 @@ export async function fillCategoryPublishedDeals(
 }> {
   const target = Math.min(50, Math.max(1, Math.floor(targetPublished) || 1));
   console.log(
-    `[SCRAPER] Fill category="${categoryName}" cg=${categoryId} targetPublished=${target} seller=personal(f=p)`,
+    `[SCRAPER] Fill category="${categoryName}" cg=${categoryId} targetPublished=${target} personalOnly=${settings.personalOnly} priceRange=${settings.minPrice}-${settings.maxPrice}`,
   );
 
   let published = 0;
@@ -131,7 +147,7 @@ export async function fillCategoryPublishedDeals(
 
   while (published < target && scanned < MAX_SCAN_PER_CATEGORY) {
     const pageSize = Math.min(FETCH_PAGE_SIZE, MAX_SCAN_PER_CATEGORY - scanned);
-    const ads = await fetchCategoryPage(categoryId, pageSize, offset);
+    const ads = await fetchCategoryPage(categoryId, pageSize, offset, settings);
     if (ads.length === 0) {
       console.log(`[SCRAPER] category="${categoryName}" no more ads at o=${offset}`);
       break;
@@ -141,6 +157,9 @@ export async function fillCategoryPublishedDeals(
 
     for (const ad of ads) {
       if (scanned >= MAX_SCAN_PER_CATEGORY || published >= target) break;
+      if (ad.price < settings.minPrice || ad.price > settings.maxPrice) {
+        continue;
+      }
       scanned++;
 
       const candidate = ingestAd(ad, categoryName);
@@ -170,6 +189,7 @@ export async function fillCategoryPublishedDeals(
 
 export async function scrapeAllCategoriesForDeals(
   targetPublishedPerCategory: number,
+  settings: ScrapeSettings,
   evaluate: (product: NewProductCandidate) => Promise<"published" | "discarded">,
 ): Promise<{
   totalPublished: number;
@@ -184,7 +204,7 @@ export async function scrapeAllCategoriesForDeals(
     chotot_category_id: string;
   }[];
   console.log(
-    `[SCRAPER] Start all categories count=${categories.length} targetPublishedPerCategory=${target}`,
+    `[SCRAPER] Start all categories count=${categories.length} targetPublishedPerCategory=${target} personalOnly=${settings.personalOnly} priceRange=${settings.minPrice}-${settings.maxPrice}`,
   );
 
   const byCategory: Record<string, number> = {};
@@ -198,6 +218,7 @@ export async function scrapeAllCategoriesForDeals(
         cat.chotot_category_id,
         cat.name,
         target,
+        settings,
         evaluate,
       );
       byCategory[cat.name] = result.published;

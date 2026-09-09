@@ -2,8 +2,10 @@ import { scrapeAllCategoriesForDeals, type NewProductCandidate } from "@/lib/scr
 import {
   getUnpublishedProductIds,
   getDb,
+  getScrapeSettings,
   publishOrDiscardAfterPriceCheck,
   MIN_PUBLISH_MARGIN_PERCENT,
+  type ScrapeSettings,
 } from "@/lib/db";
 import { checkPrice } from "@/lib/price-checker";
 
@@ -12,6 +14,7 @@ export type JobStatus = {
   startedAt: string | null;
   finishedAt: string | null;
   lastError: string | null;
+  scrapeSettings: ScrapeSettings | null;
   lastResult: {
     newProducts: number;
     byCategory: Record<string, number>;
@@ -44,6 +47,7 @@ let status: JobStatus = {
   startedAt: null,
   finishedAt: null,
   lastError: null,
+  scrapeSettings: null,
   lastResult: null,
   mode: "idle",
   cronRunning: false,
@@ -69,6 +73,7 @@ export function getJobStatus(): JobStatus {
     cronRunning: !!cronInterval,
     intervalMinutes: cronIntervalMinutes,
     scrapeLimit: cronInterval ? cronScrapeLimit : status.scrapeLimit,
+    scrapeSettings: getScrapeSettings(),
   };
 }
 
@@ -108,6 +113,7 @@ async function evaluateProduct(
 export async function runScrapeJob(opts?: {
   mode?: "once" | "cron";
   limitPerCategory?: number;
+  settings?: ScrapeSettings;
 }): Promise<void> {
   if (jobRunning) {
     console.log("[JOB] Skip start: already running");
@@ -117,6 +123,7 @@ export async function runScrapeJob(opts?: {
   const targetPublishedPerCategory = clampScrapeLimit(
     opts?.limitPerCategory ?? (opts?.mode === "cron" ? cronScrapeLimit : DEFAULT_SCRAPE_LIMIT),
   );
+  const settings = opts?.settings ?? getScrapeSettings();
 
   jobRunning = true;
   status = {
@@ -125,6 +132,7 @@ export async function runScrapeJob(opts?: {
     startedAt: new Date().toISOString(),
     finishedAt: null,
     lastError: null,
+    scrapeSettings: settings,
     mode: opts?.mode || "once",
     scrapeLimit: targetPublishedPerCategory,
   };
@@ -160,6 +168,7 @@ export async function runScrapeJob(opts?: {
 
     const scrapeResult = await scrapeAllCategoriesForDeals(
       targetPublishedPerCategory,
+      settings,
       async (product) => {
         const outcome = await evaluateProduct(product);
         priceChecked++;
