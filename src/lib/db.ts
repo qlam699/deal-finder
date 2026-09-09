@@ -20,15 +20,21 @@ export type ScrapeSettings = {
   personalOnly: boolean;
   minPrice: number;
   maxPrice: number;
+  /** Min profit margin (%) required to publish a deal to the list. */
+  minMarginPercent: number;
 };
 
 export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettings = {
   personalOnly: true,
   minPrice: 100000,
   maxPrice: 60000000,
+  minMarginPercent: 10,
 };
 
 function normalizeScrapeSettings(input?: Partial<ScrapeSettings> | null): ScrapeSettings {
+  const rawMargin = Math.floor(
+    Number(input?.minMarginPercent ?? DEFAULT_SCRAPE_SETTINGS.minMarginPercent),
+  );
   const next: ScrapeSettings = {
     personalOnly: input?.personalOnly ?? DEFAULT_SCRAPE_SETTINGS.personalOnly,
     minPrice: Math.max(0, Math.floor(Number(input?.minPrice ?? DEFAULT_SCRAPE_SETTINGS.minPrice))),
@@ -36,6 +42,9 @@ function normalizeScrapeSettings(input?: Partial<ScrapeSettings> | null): Scrape
       0,
       Math.floor(Number(input?.maxPrice ?? DEFAULT_SCRAPE_SETTINGS.maxPrice)),
     ),
+    minMarginPercent: Number.isFinite(rawMargin)
+      ? Math.min(100, Math.max(1, rawMargin))
+      : DEFAULT_SCRAPE_SETTINGS.minMarginPercent,
   };
 
   if (next.maxPrice < next.minPrice) {
@@ -394,16 +403,21 @@ export function updateProductPrice(
     .run(marketPrice, dealPrice, profitMargin, id);
 }
 
-/** Min profit margin (%) vs market to show a scrape result on the web. */
-export const MIN_PUBLISH_MARGIN_PERCENT = 10;
+/** Default min profit margin (%) when settings omit a value. */
+export const MIN_PUBLISH_MARGIN_PERCENT = DEFAULT_SCRAPE_SETTINGS.minMarginPercent;
 
 /**
- * After AI pricing: keep + show if margin > 10%; otherwise hard-delete product row
- * (seen_products stays so the ad is never scraped again). Never goes to trash.
+ * After AI pricing: keep + show if margin >= minMarginPercent; otherwise hard-delete
+ * product row (seen_products stays so the ad is never scraped again). Never goes to trash.
  */
 export function publishOrDiscardAfterPriceCheck(
   id: number,
+  minMarginPercent: number = MIN_PUBLISH_MARGIN_PERCENT,
 ): "published" | "discarded" {
+  const threshold = Math.min(
+    100,
+    Math.max(1, Math.floor(Number(minMarginPercent)) || MIN_PUBLISH_MARGIN_PERCENT),
+  );
   const row = getDb()
     .prepare(
       "SELECT checked, profit_margin, published FROM products WHERE id = ?",
@@ -416,9 +430,7 @@ export function publishOrDiscardAfterPriceCheck(
 
   const margin = Number(row.profit_margin);
   const isDeal =
-    row.checked === 1 &&
-    Number.isFinite(margin) &&
-    margin > MIN_PUBLISH_MARGIN_PERCENT;
+    row.checked === 1 && Number.isFinite(margin) && margin >= threshold;
 
   if (isDeal) {
     getDb().prepare("UPDATE products SET published = 1 WHERE id = ?").run(id);

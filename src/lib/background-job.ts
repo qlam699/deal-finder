@@ -4,7 +4,6 @@ import {
   getDb,
   getScrapeSettings,
   publishOrDiscardAfterPriceCheck,
-  MIN_PUBLISH_MARGIN_PERCENT,
   type ScrapeSettings,
 } from "@/lib/db";
 import { checkPrice } from "@/lib/price-checker";
@@ -90,6 +89,7 @@ function extractSellerDescription(product: { content?: string | null; raw_json?:
 
 async function evaluateProduct(
   product: NewProductCandidate & { checked?: number },
+  minMarginPercent: number,
 ): Promise<"published" | "discarded"> {
   if (!product.checked) {
     console.log(`[JOB] price-check product_id=${product.id} title="${product.title}"`);
@@ -97,14 +97,14 @@ async function evaluateProduct(
     await checkPrice(product.id, product.title, product.price, sellerDescription);
   }
 
-  const outcome = publishOrDiscardAfterPriceCheck(product.id);
+  const outcome = publishOrDiscardAfterPriceCheck(product.id, minMarginPercent);
   if (outcome === "published") {
     console.log(
-      `[JOB] PUBLISHED product_id=${product.id} (margin > ${MIN_PUBLISH_MARGIN_PERCENT}%)`,
+      `[JOB] PUBLISHED product_id=${product.id} (margin >= ${minMarginPercent}%)`,
     );
   } else {
     console.log(
-      `[JOB] DISCARDED product_id=${product.id} (no deal / margin ≤ ${MIN_PUBLISH_MARGIN_PERCENT}%) — kept in seen_products only`,
+      `[JOB] DISCARDED product_id=${product.id} (no deal / margin < ${minMarginPercent}%) — kept in seen_products only`,
     );
   }
   return outcome;
@@ -139,13 +139,14 @@ export async function runScrapeJob(opts?: {
   persistStatus();
 
   console.log(
-    `[JOB] Started mode=${status.mode} targetPublishedPerCategory=${targetPublishedPerCategory}`,
+    `[JOB] Started mode=${status.mode} targetPublishedPerCategory=${targetPublishedPerCategory} minMarginPercent=${settings.minMarginPercent}`,
   );
 
   try {
     let priceChecked = 0;
     let published = 0;
     let discarded = 0;
+    const minMarginPercent = settings.minMarginPercent;
 
     // Recover unpublished leftovers from an interrupted previous run.
     const pendingIds = getUnpublishedProductIds();
@@ -159,7 +160,7 @@ export async function runScrapeJob(opts?: {
       console.log(`[JOB] Recover pending unpublished=${pending.length}`);
       for (const product of pending) {
         const beforeChecked = product.checked;
-        const outcome = await evaluateProduct(product);
+        const outcome = await evaluateProduct(product, minMarginPercent);
         if (!beforeChecked) priceChecked++;
         if (outcome === "published") published++;
         else discarded++;
@@ -170,7 +171,7 @@ export async function runScrapeJob(opts?: {
       targetPublishedPerCategory,
       settings,
       async (product) => {
-        const outcome = await evaluateProduct(product);
+        const outcome = await evaluateProduct(product, minMarginPercent);
         priceChecked++;
         if (outcome === "published") published++;
         else discarded++;

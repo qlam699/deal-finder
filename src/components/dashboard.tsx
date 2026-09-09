@@ -123,6 +123,7 @@ type ScrapeSettingsState = {
   personalOnly: boolean;
   minPrice: number;
   maxPrice: number;
+  minMarginPercent: number;
 };
 type ListingCheckStatus = {
   running: boolean;
@@ -267,6 +268,7 @@ const DEFAULT_SCRAPE_SETTINGS: ScrapeSettingsState = {
   personalOnly: true,
   minPrice: 100000,
   maxPrice: 60000000,
+  minMarginPercent: 10,
 };
 
 const SCRAPE_SETTINGS_STORAGE_KEY = "deal-finder-scrape-settings";
@@ -289,11 +291,18 @@ function normalizeScrapeSettings(input?: Partial<ScrapeSettingsState> | null): S
     minPrice,
     Math.max(0, Math.floor(Number(input?.maxPrice ?? DEFAULT_SCRAPE_SETTINGS.maxPrice))),
   );
+  const rawMargin = Math.floor(
+    Number(input?.minMarginPercent ?? DEFAULT_SCRAPE_SETTINGS.minMarginPercent),
+  );
+  const minMarginPercent = Number.isFinite(rawMargin)
+    ? Math.min(100, Math.max(1, rawMargin))
+    : DEFAULT_SCRAPE_SETTINGS.minMarginPercent;
 
   return {
     personalOnly: !!input?.personalOnly,
     minPrice,
     maxPrice,
+    minMarginPercent,
   };
 }
 
@@ -459,8 +468,11 @@ export default function Dashboard() {
     } else if (data.lastResult) {
       const published = data.lastResult.published ?? 0;
       const discarded = data.lastResult.discarded ?? 0;
+      const margin =
+        Number(data.scrapeSettings?.minMarginPercent) ||
+        DEFAULT_SCRAPE_SETTINGS.minMarginPercent;
       setJobMessage(
-        `Lần quét gần nhất: ${data.lastResult.newProducts} tin mới · hiện ${published} deal (>10%) · bỏ ${discarded}` +
+        `Lần quét gần nhất: ${data.lastResult.newProducts} tin mới · hiện ${published} deal (≥${margin}%) · bỏ ${discarded}` +
           (data.cronRunning ? ` · Cron ${data.intervalMinutes || 10} phút` : ""),
       );
     } else if (data.cronRunning) {
@@ -480,6 +492,7 @@ export default function Dashboard() {
       } | null;
       intervalMinutes?: number | null;
       scrapeLimit?: number | null;
+      scrapeSettings?: ScrapeSettingsState | null;
     };
   }, []);
 
@@ -928,36 +941,45 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground" title="Số tin hợp lệ (>10% chênh lệch) muốn hiện trên list mỗi danh mục mỗi lần quét (1–50). Hệ thống sẽ quét tiếp cho đủ số này.">
-            <span className="whitespace-nowrap">Số tin sẽ quét</span>
-            <Input
-              type="number"
-              min={1}
-              max={50}
-              value={scrapeLimit}
-              onChange={(e) => setScrapeLimit(Number(e.target.value))}
-              disabled={scraping}
-              className="w-16 h-9"
-            />
-          </label>
           <Dialog open={scrapeSettingsOpen} onOpenChange={setScrapeSettingsOpen}>
             <DialogTrigger>
               <Button variant="outline" type="button">
                 Cài đặt quét
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-xl">
+            <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Cài đặt quét</DialogTitle>
               </DialogHeader>
 
-              <Tabs defaultValue="settings" className="space-y-4">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="settings">Thiết lập</TabsTrigger>
-                  <TabsTrigger value="categories">Danh mục</TabsTrigger>
-                </TabsList>
+              <div className="space-y-6 py-1">
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold">Danh mục</h3>
+                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-2">
+                    {categories.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Chưa có danh mục nào.</p>
+                    ) : (
+                      categories.map((category) => (
+                        <label
+                          key={category.id}
+                          className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                        >
+                          <span className="text-sm font-medium">{category.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={category.enabled === 1}
+                            onChange={() => {
+                              void handleToggleCategory(category.id, category.enabled === 0);
+                            }}
+                          />
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </section>
 
-                <TabsContent value="settings" className="space-y-4 py-1">
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold">Cá nhân</h3>
                   <label className="flex items-center gap-2 text-sm font-medium">
                     <input
                       type="checkbox"
@@ -971,7 +993,10 @@ export default function Dashboard() {
                     />
                     Chỉ quét tin người đăng là cá nhân
                   </label>
+                </section>
 
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold">Giá</h3>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="scrape-min-price">Giá tối thiểu</Label>
@@ -1004,36 +1029,52 @@ export default function Dashboard() {
                       />
                     </div>
                   </div>
+                </section>
 
-                  <p className="text-xs text-muted-foreground">
-                    Mặc định: chỉ quét tin cá nhân, giá từ 100.000đ đến 60.000.000đ.
-                  </p>
-                </TabsContent>
-
-                <TabsContent value="categories" className="space-y-3 py-1">
-                  <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border p-2">
-                    {categories.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Chưa có danh mục nào.</p>
-                    ) : (
-                      categories.map((category) => (
-                        <label
-                          key={category.id}
-                          className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50"
-                        >
-                          <span className="text-sm font-medium">{category.name}</span>
-                          <input
-                            type="checkbox"
-                            checked={category.enabled === 1}
-                            onChange={() => {
-                              void handleToggleCategory(category.id, category.enabled === 0);
-                            }}
-                          />
-                        </label>
-                      ))
-                    )}
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold">Chênh lệch</h3>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="scrape-min-margin">
+                      Mức chênh lệch tối thiểu (%)
+                    </Label>
+                    <Input
+                      id="scrape-min-margin"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={scrapeSettings.minMarginPercent}
+                      onChange={(e) =>
+                        setScrapeSettings((prev) => ({
+                          ...prev,
+                          minMarginPercent: Number(e.target.value),
+                        }))
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Chỉ lưu và hiện tin khi cột chênh lệch ≥ mức này (vd. 30 = cần ≥30%).
+                    </p>
                   </div>
-                </TabsContent>
-              </Tabs>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold">Số tin sẽ quét</h3>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="scrape-limit">
+                      Mỗi lần quét / danh mục
+                    </Label>
+                    <Input
+                      id="scrape-limit"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={scrapeLimit}
+                      onChange={(e) => setScrapeLimit(Number(e.target.value))}
+                      disabled={scraping}
+                      className="w-24"
+                    />
+                  </div>
+                </section>
+              </div>
 
               <div className="flex justify-end gap-2 pt-2">
                 <Button
