@@ -7,7 +7,7 @@
 - Main users: Single operator (local / VPS); no multi-user auth yet
 - Main business domains: Listing scrape, AI pricing, deal publish filter, category/API-key management, trash
 - Current architecture status: MVP running as Next.js App Router + SQLite; production at `https://deal.codayroi.com`
-- Last verified: 2026-09-22 (code + README + deploy docs)
+- Last verified: 2026-09-22 (mobile card view + prior code/README/deploy docs)
 
 ## 2. Technology Stack
 
@@ -55,9 +55,13 @@ src/
       api-keys/route.ts
       cron/route.ts          # Start/stop/status in-process cron
   components/
-    dashboard.tsx            # Main UI (tabs)
+    dashboard.tsx            # Thin orchestrator (hooks + panels)
+    dashboard/               # Memoized Products / Trash / Keys / scrape UI
+    product-card-view.tsx    # Mobile one-card product carousel
     ui/                      # shadcn primitives
+  hooks/                     # Dashboard domain hooks
   lib/
+    dashboard/               # Shared types, formatters, view-mode helpers
     db.ts                    # Schema, migrations, CRUD, scrape settings
     scraper.ts               # Chợ Tốt gateway scrape + deal fill
     price-checker.ts         # Multi-provider AI pricing chain
@@ -160,12 +164,17 @@ Hard delete does **not** remove `seen_products`, so the listing is not re-ingest
 
 ### Dashboard (`dashboard.tsx`)
 
-- Responsibility: Products / Trash / Categories / API Keys UI
+- Responsibility: Products / Trash / Categories / API Keys UI orchestrator
 - Entry point: dynamic import from `client-page.tsx` with `ssr: false`
-- Important files: `src/components/dashboard.tsx`
+- Important files:
+  - `src/components/dashboard.tsx` (compose hooks + panels)
+  - `src/components/dashboard/*` (memoized panels)
+  - `src/hooks/use-products.ts`, `use-scrape-job.ts`, `use-api-keys.ts`, `use-products-view.ts`, …
+  - `src/lib/dashboard/*` (types, format, scrape settings, view mode)
+  - `src/components/product-card-view.tsx`
 - Dependencies: product/category/key/cron APIs
 - Used by: home page
-- Notes: SSR disabled to avoid browser-extension hydration mismatches
+- Notes: SSR disabled to avoid browser-extension hydration mismatches. Domain state lives in custom hooks so tab panels can `memo` and skip re-render when unrelated state (e.g. job message) changes. Products tab supports **list** / **card**; defaults card ≤767px, list otherwise; per-breakpoint localStorage overrides.
 
 ### Deploy
 
@@ -415,3 +424,5 @@ Document confirmed:
 | 2026-09-22 | Job / cron orchestration | Code inspection | `src/lib/background-job.ts` |
 | 2026-09-22 | Deploy path | Deploy docs + workflow | `deploy/README.md`, `.github/workflows/deploy.yml` |
 | 2026-09-22 | Extra API routes | Glob | `src/app/api/products/check-*` |
+| 2026-09-22 | Products list/card views | Implementation | `product-card-view.tsx`, `dashboard.tsx` |
+| 2026-09-22 | Dashboard refactor hooks/panels | Implementation + tsc | `src/hooks/*`, `src/components/dashboard/*` |
