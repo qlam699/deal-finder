@@ -244,9 +244,9 @@ export function ProductCardView({
   const highlightDeal = product.profit_margin != null && product.profit_margin > 20;
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-md space-y-3">
       <div
-        className={`touch-pan-y select-none overflow-hidden rounded-xl border ${
+        className={`touch-pan-y select-none overflow-hidden rounded-xl border shadow-sm ${
           highlightDeal ? "bg-green-50 dark:bg-green-950" : "bg-background"
         }`}
         onTouchStart={onTouchStart}

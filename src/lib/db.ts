@@ -22,6 +22,8 @@ export type ScrapeSettings = {
   maxPrice: number;
   /** Min profit margin (%) required to publish a deal to the list. */
   minMarginPercent: number;
+  /** Case-insensitive substrings; skip ads if title/body contains any. */
+  skipKeywords: string[];
 };
 
 export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettings = {
@@ -29,7 +31,34 @@ export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettings = {
   minPrice: 100000,
   maxPrice: 60000000,
   minMarginPercent: 10,
+  skipKeywords: ["bể", "hư", "hỏng", "sọc"],
 };
+
+const MAX_SKIP_KEYWORDS = 100;
+const MAX_SKIP_KEYWORD_LENGTH = 80;
+
+export function normalizeSkipKeywords(input?: unknown): string[] {
+  let raw: string[] = [];
+  if (Array.isArray(input)) {
+    raw = input.map((x) => String(x ?? ""));
+  } else if (typeof input === "string") {
+    raw = input.split(/[\n,;]+/);
+  }
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const trimmed = item.trim().replace(/\s+/g, " ");
+    if (!trimmed) continue;
+    const clipped = trimmed.slice(0, MAX_SKIP_KEYWORD_LENGTH);
+    const key = clipped.toLocaleLowerCase("vi");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clipped);
+    if (out.length >= MAX_SKIP_KEYWORDS) break;
+  }
+  return out;
+}
 
 function normalizeScrapeSettings(input?: Partial<ScrapeSettings> | null): ScrapeSettings {
   const rawMargin = Math.floor(
@@ -45,6 +74,9 @@ function normalizeScrapeSettings(input?: Partial<ScrapeSettings> | null): Scrape
     minMarginPercent: Number.isFinite(rawMargin)
       ? Math.min(100, Math.max(1, rawMargin))
       : DEFAULT_SCRAPE_SETTINGS.minMarginPercent,
+    skipKeywords: normalizeSkipKeywords(
+      input?.skipKeywords ?? DEFAULT_SCRAPE_SETTINGS.skipKeywords,
+    ),
   };
 
   if (next.maxPrice < next.minPrice) {

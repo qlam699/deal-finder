@@ -85,6 +85,16 @@ async function fetchCategoryPage(
   return data.ads || [];
 }
 
+function matchesSkipKeyword(ad: ChototAd, keywords: string[]): string | null {
+  if (!keywords.length) return null;
+  const haystack = `${ad.subject}\n${ad.body || ""}`.toLocaleLowerCase("vi");
+  for (const keyword of keywords) {
+    const needle = keyword.toLocaleLowerCase("vi");
+    if (needle && haystack.includes(needle)) return keyword;
+  }
+  return null;
+}
+
 function ingestAd(ad: ChototAd, categoryName: string): NewProductCandidate | null {
   const imageUrl = normalizeChototImage(ad.image) || normalizeChototImage(ad.images?.[0]);
   const result = insertProduct({
@@ -136,7 +146,7 @@ export async function fillCategoryPublishedDeals(
 }> {
   const target = Math.min(50, Math.max(1, Math.floor(targetPublished) || 1));
   console.log(
-    `[SCRAPER] Fill category="${categoryName}" cg=${categoryId} targetPublished=${target} personalOnly=${settings.personalOnly} priceRange=${settings.minPrice}-${settings.maxPrice}`,
+    `[SCRAPER] Fill category="${categoryName}" cg=${categoryId} targetPublished=${target} personalOnly=${settings.personalOnly} priceRange=${settings.minPrice}-${settings.maxPrice} skipKeywords=${settings.skipKeywords.length}`,
   );
 
   let published = 0;
@@ -158,6 +168,13 @@ export async function fillCategoryPublishedDeals(
     for (const ad of ads) {
       if (scanned >= MAX_SCAN_PER_CATEGORY || published >= target) break;
       if (ad.price < settings.minPrice || ad.price > settings.maxPrice) {
+        continue;
+      }
+      const matchedKeyword = matchesSkipKeyword(ad, settings.skipKeywords);
+      if (matchedKeyword) {
+        console.log(
+          `[SCRAPER] SKIP keyword="${matchedKeyword}" ad_id=${ad.list_id} title="${ad.subject}"`,
+        );
         continue;
       }
       scanned++;
@@ -204,7 +221,7 @@ export async function scrapeAllCategoriesForDeals(
     chotot_category_id: string;
   }[];
   console.log(
-    `[SCRAPER] Start all categories count=${categories.length} targetPublishedPerCategory=${target} personalOnly=${settings.personalOnly} priceRange=${settings.minPrice}-${settings.maxPrice}`,
+    `[SCRAPER] Start all categories count=${categories.length} targetPublishedPerCategory=${target} personalOnly=${settings.personalOnly} priceRange=${settings.minPrice}-${settings.maxPrice} skipKeywords=${settings.skipKeywords.length}`,
   );
 
   const byCategory: Record<string, number> = {};

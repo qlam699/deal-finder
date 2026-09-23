@@ -2,11 +2,11 @@
 
 ## 1. Task Summary
 
-- Task: Refactor `dashboard.tsx` for performance (hooks + panels)
-- Objective: Split monolith into custom hooks and memoized panels
-- Requested behavior: Optimize performance; extract multiple files / custom hooks
-- Expected result: Thin orchestrator; domain hooks; memoized UI panels; behavior preserved
-- Started: 2026-09-22
+- Task: Skip listings by configurable keywords
+- Objective: Ignore ads whose title/body contain skip keywords during scrape
+- Requested behavior: Settings field for keywords (e.g. bể, hư, no faceid)
+- Expected result: Keywords in scrape_settings; scraper skips matches; UI in Cài đặt quét
+- Started: 2026-09-23
 - Status: Completed
 - Priority: Medium
 
@@ -14,73 +14,58 @@
 
 ### In Scope
 
-- `src/lib/dashboard/*` types/format/view/scrape-settings
-- `src/hooks/*` domain hooks
-- `src/components/dashboard/*` memoized panels
-- Slim `src/components/dashboard.tsx`
+- `skipKeywords: string[]` on scrape settings (DB + frontend)
+- Scraper filter before insert
+- Textarea in scrape settings dialog
 
 ### Out of Scope
 
-- Backend / API changes
-- Visual redesign
-- Deduping formatters inside `product-card-view.tsx` (optional follow-up)
-
-## 3. Requirements
-
-### Confirmed Requirements
-
-- Performance-oriented split via hooks/files
-  - Source: User
-  - Acceptance criteria: `tsc` passes; list/card, scrape, trash, keys still wired
-
-## 4. Investigation Completed
-
-- Prior `dashboard.tsx` ~1757 lines holding all state/effects/UI
+- Retroactive purge of existing products
+- Regex / word-boundary matching (substring, case-insensitive)
 
 ## 5. Implementation Progress
 
 ### Changes Completed
 
-- [x] Extract `src/lib/dashboard/{types,format,scrape-settings,products-view}.ts`
-- [x] Extract hooks: url-pagination, products, trash, categories, api-keys, scrape-job, listing-check, price-check, products-view
-- [x] Extract panels: products, trash, api-keys, scrape-header, title preview, sortable head
-- [x] Rewrite `dashboard.tsx` as orchestrator (~190 lines)
-- [x] `npx tsc --noEmit` passed
-- [x] Update `architecture.md` / this file
+- [x] `src/lib/db.ts` — `skipKeywords` + `normalizeSkipKeywords`
+- [x] `src/lib/dashboard/{types,scrape-settings}.ts` — frontend parity + textarea helpers
+- [x] `src/lib/scraper.ts` — skip before `ingestAd` (same pattern as price filter)
+- [x] `src/components/dashboard/scrape-header.tsx` — textarea UI
+- [x] Docs + `tsc` pass
 
 ## 6. Modified Files
 
-See git status for full list under `src/hooks`, `src/lib/dashboard`, `src/components/dashboard*`.
-
-## 7. Current Problem or Blocker
-
-- None
+- `src/lib/db.ts`
+- `src/lib/dashboard/types.ts`
+- `src/lib/dashboard/scrape-settings.ts`
+- `src/lib/scraper.ts`
+- `src/components/dashboard/scrape-header.tsx`
+- `architecture.md`
+- `task_on_progress.md`
 
 ## 9. Tests and Validation
 
 ### Completed
 
-- [x] TypeScript check — pass
+- [x] `npx tsc --noEmit` — pass
 
 ### Remaining
 
-- [ ] Manual smoke: scrape, products list/card, trash restore, API key drag
+- [ ] Manual: set keywords → scrape → confirm `[SCRAPER] SKIP keyword=...` in logs
 
 ## 11. Next Steps
 
-1. Manual smoke on UI
-2. Optional: reuse `@/lib/dashboard/format` inside `product-card-view.tsx`
-3. Commit when user asks
+1. Manual smoke on Cài đặt quét → Lưu → Quét
+2. Commit when user asks
 
 ## 12. Handoff Notes
 
-- Entry remains `@/components/dashboard` default export
-- Memo helps when scrape `jobMessage` updates without product prop changes
-- Cross-hook actions (trash ↔ products) composed in orchestrator
+- Keyword match: case-insensitive substring on `subject` + `body`
+- Skipped ads are not inserted and not written to `seen_products` (same as out-of-price-range)
+- Max 100 keywords, 80 chars each
 
 ## 13. Last Update
 
-- Updated: 2026-09-22
+- Updated: 2026-09-23
 - Updated by: Auto (Cursor agent)
 - Current branch: main
-- Git status summary: Refactored dashboard into hooks + panels; memory docs updated

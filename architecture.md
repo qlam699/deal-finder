@@ -142,7 +142,7 @@ Hard delete does **not** remove `seen_products`, so the listing is not re-ingest
 - Important files: `src/lib/scraper.ts`
 - Dependencies: Chợ Tốt gateway API, `db.insertProduct`
 - Used by: `background-job.ts`
-- Notes: Default scrape limit 5 (clamp 1–50); settings include personal-only and price range filters
+- Notes: Default scrape limit 5 (clamp 1–50); settings include personal-only, price range, and `skipKeywords` (case-insensitive substring on title+body before insert)
 
 ### Price checker (`price-checker.ts`)
 
@@ -216,7 +216,7 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 ### `settings`
 
 - Key-value store
-- Known keys: `scrape_settings` (JSON: `personalOnly`, `minPrice`, `maxPrice`, `minMarginPercent`), `job_status`, migration flags
+- Known keys: `scrape_settings` (JSON: `personalOnly`, `minPrice`, `maxPrice`, `minMarginPercent`, `skipKeywords`), `job_status`, migration flags
 
 ### Scrape settings defaults (code)
 
@@ -224,6 +224,7 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 - `minPrice: 100000`
 - `maxPrice: 60000000`
 - `minMarginPercent: 10`
+- `skipKeywords: ["bể", "hư", "hỏng", "sọc"]` — case-insensitive substrings matched against title + body; matching ads are skipped (not inserted, not marked seen)
 
 ## 8. APIs and Integrations
 
@@ -426,3 +427,4 @@ Document confirmed:
 | 2026-09-22 | Extra API routes | Glob | `src/app/api/products/check-*` |
 | 2026-09-22 | Products list/card views | Implementation | `product-card-view.tsx`, `dashboard.tsx` |
 | 2026-09-22 | Dashboard refactor hooks/panels | Implementation + tsc | `src/hooks/*`, `src/components/dashboard/*` |
+| 2026-09-23 | Skip keywords scrape filter | Implementation + tsc | `db.ts`, `scraper.ts`, `scrape-header.tsx` |

@@ -43,7 +43,7 @@ export function useScrapeJob({
 }: UseScrapeJobOptions) {
   const [scraping, setScraping] = useState(false);
   const [cronRunning, setCronRunning] = useState(false);
-  const [scrapeLimit, setScrapeLimit] = useState(5);
+  const [scrapeLimit, setScrapeLimit] = useState(10);
   const [scrapeSettingsOpen, setScrapeSettingsOpen] = useState(false);
   const [scrapeSettings, setScrapeSettings] = useState<ScrapeSettingsState>(
     readScrapeSettingsFromLocalStorage,

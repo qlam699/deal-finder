@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatIntegerWithCommas, parseIntegerInput } from "@/lib/dashboard/format";
+import { skipKeywordsToText, normalizeSkipKeywords } from "@/lib/dashboard/scrape-settings";
 import type { Category, ScrapeSettingsState } from "@/lib/dashboard/types";
 
 type ScrapeHeaderProps = {
@@ -167,6 +168,35 @@ function ScrapeHeaderInner({
                   />
                   <p className="text-xs text-muted-foreground">
                     Chỉ lưu và hiện tin khi cột chênh lệch ≥ mức này (vd. 30 = cần ≥30%).
+                  </p>
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold">Từ khóa bỏ qua</h3>
+                <div className="space-y-1.5">
+                  <Label htmlFor="scrape-skip-keywords">
+                    Bỏ qua tin nếu tiêu đề hoặc mô tả chứa từ khóa
+                  </Label>
+                  <textarea
+                    id="scrape-skip-keywords"
+                    rows={5}
+                    value={skipKeywordsToText(scrapeSettings.skipKeywords)}
+                    onChange={(e) =>
+                      setScrapeSettings((prev) => ({
+                        ...prev,
+                        skipKeywords: normalizeSkipKeywords(e.target.value),
+                      }))
+                    }
+                    placeholder={"bể\như\nno faceid\nmất Face ID"}
+                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-[100px] w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Mỗi dòng một từ khóa (hoặc cách bằng dấu phẩy). Không phân biệt hoa/thường.
+                    Ví dụ: bể, hư, no faceid.
+                    {scrapeSettings.skipKeywords.length > 0
+                      ? ` Đang có ${scrapeSettings.skipKeywords.length} từ khóa.`
+                      : ""}
                   </p>
                 </div>
               </section>

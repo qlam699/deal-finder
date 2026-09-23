@@ -7,6 +7,8 @@ export type ScrapeSettingsState = {
   minPrice: number;
   maxPrice: number;
   minMarginPercent: number;
+  /** Case-insensitive substrings; skip ads if title/body contains any. */
+  skipKeywords: string[];
 };
 
 export type ListingCheckStatus = {
