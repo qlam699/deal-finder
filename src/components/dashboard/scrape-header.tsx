@@ -1,6 +1,13 @@
 "use client";
 
-import { memo, type Dispatch, type SetStateAction } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,9 +36,9 @@ type ScrapeHeaderProps = {
   cronRunning: boolean;
   canScrape: boolean;
   onToggleCategory: (id: number, enabled: boolean) => void;
-  onSaveScrapeSettings: () => void;
-  onToggleCron: () => void;
-  onScrape: () => void;
+  onSaveScrapeSettings: (override?: Partial<ScrapeSettingsState>) => void;
+  onToggleCron: (override?: Partial<ScrapeSettingsState>) => void;
+  onScrape: (override?: Partial<ScrapeSettingsState>) => void;
 };
 
 function ScrapeHeaderInner({
@@ -52,6 +59,34 @@ function ScrapeHeaderInner({
   onToggleCron,
   onScrape,
 }: ScrapeHeaderProps) {
+  // Draft text so typing newlines/spaces is not wiped by normalize-on-every-keystroke.
+  const [skipKeywordsDraft, setSkipKeywordsDraft] = useState(() =>
+    skipKeywordsToText(scrapeSettings.skipKeywords),
+  );
+
+  useEffect(() => {
+    if (!scrapeSettingsOpen) return;
+    setSkipKeywordsDraft(skipKeywordsToText(scrapeSettings.skipKeywords));
+    // Only rehydrate draft when opening the dialog — not on every settings poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open transition only
+  }, [scrapeSettingsOpen]);
+
+  const keywordsOverrideFromDraft = useCallback(
+    (): Partial<ScrapeSettingsState> => ({
+      skipKeywords: normalizeSkipKeywords(skipKeywordsDraft),
+    }),
+    [skipKeywordsDraft],
+  );
+
+  const commitSkipKeywordsDraft = useCallback(() => {
+    const skipKeywords = normalizeSkipKeywords(skipKeywordsDraft);
+    setScrapeSettings((prev) => ({ ...prev, skipKeywords }));
+    setSkipKeywordsDraft(skipKeywordsToText(skipKeywords));
+    return skipKeywords;
+  }, [skipKeywordsDraft, setScrapeSettings]);
+
+  const draftKeywordCount = normalizeSkipKeywords(skipKeywordsDraft).length;
+
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
@@ -181,22 +216,18 @@ function ScrapeHeaderInner({
                   <textarea
                     id="scrape-skip-keywords"
                     rows={5}
-                    value={skipKeywordsToText(scrapeSettings.skipKeywords)}
-                    onChange={(e) =>
-                      setScrapeSettings((prev) => ({
-                        ...prev,
-                        skipKeywords: normalizeSkipKeywords(e.target.value),
-                      }))
-                    }
+                    value={skipKeywordsDraft}
+                    onChange={(e) => setSkipKeywordsDraft(e.target.value)}
+                    onBlur={() => {
+                      commitSkipKeywordsDraft();
+                    }}
                     placeholder={"bể\như\nno faceid\nmất Face ID"}
                     className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-[100px] w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                   />
                   <p className="text-xs text-muted-foreground">
                     Mỗi dòng một từ khóa (hoặc cách bằng dấu phẩy). Không phân biệt hoa/thường.
                     Ví dụ: bể, hư, no faceid.
-                    {scrapeSettings.skipKeywords.length > 0
-                      ? ` Đang có ${scrapeSettings.skipKeywords.length} từ khóa.`
-                      : ""}
+                    {draftKeywordCount > 0 ? ` Đang có ${draftKeywordCount} từ khóa.` : ""}
                   </p>
                 </div>
               </section>
@@ -230,7 +261,7 @@ function ScrapeHeaderInner({
               </Button>
               <Button
                 type="button"
-                onClick={() => void onSaveScrapeSettings()}
+                onClick={() => void onSaveScrapeSettings(keywordsOverrideFromDraft())}
                 disabled={savingScrapeSettings}
               >
                 {savingScrapeSettings ? "Đang lưu..." : "Lưu"}
@@ -240,7 +271,7 @@ function ScrapeHeaderInner({
         </Dialog>
         <Button
           variant="outline"
-          onClick={onToggleCron}
+          onClick={() => void onToggleCron(keywordsOverrideFromDraft())}
           disabled={!cronRunning && !canScrape}
           title={
             !cronRunning && !canScrape
@@ -251,7 +282,7 @@ function ScrapeHeaderInner({
           {cronRunning ? "Tắt quét định kỳ" : "Bật quét định kỳ (10p)"}
         </Button>
         <Button
-          onClick={onScrape}
+          onClick={() => void onScrape(keywordsOverrideFromDraft())}
           disabled={scraping || !canScrape}
           title={!canScrape ? "Thêm ít nhất 1 API key trước khi quét" : undefined}
         >

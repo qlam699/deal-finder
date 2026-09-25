@@ -7,7 +7,7 @@ export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettingsState = {
   minPrice: 100000,
   maxPrice: 60000000,
   minMarginPercent: 5,
-  skipKeywords: ["bể", "hư", "hỏng", "sọc"],
+  skipKeywords: ["bể", "hư", "hỏng", "sọc", "xác"],
 };
 
 const MAX_SKIP_KEYWORDS = 100;

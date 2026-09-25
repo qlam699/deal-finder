@@ -124,9 +124,9 @@ export function useScrapeJob({
     };
   }, [scraping, cronRunning, fetchJobStatus, fetchProducts, fetchApiKeys, refreshListAjax]);
 
-  const handleScrape = useCallback(async () => {
+  const handleScrape = useCallback(async (settingsOverride?: Partial<ScrapeSettingsState>) => {
     const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
-    const nextSettings = normalizeScrapeSettings(scrapeSettings);
+    const nextSettings = normalizeScrapeSettings({ ...scrapeSettings, ...settingsOverride });
     setScrapeLimit(limit);
     setScrapeSettings(nextSettings);
     setScraping(true);
@@ -159,7 +159,7 @@ export function useScrapeJob({
     fetchProducts,
   ]);
 
-  const handleToggleCron = useCallback(async () => {
+  const handleToggleCron = useCallback(async (settingsOverride?: Partial<ScrapeSettingsState>) => {
     if (cronRunning) {
       await fetch("/api/scrape", {
         method: "POST",
@@ -168,7 +168,7 @@ export function useScrapeJob({
       });
     } else {
       const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
-      const nextSettings = normalizeScrapeSettings(scrapeSettings);
+      const nextSettings = normalizeScrapeSettings({ ...scrapeSettings, ...settingsOverride });
       setScrapeLimit(limit);
       setScrapeSettings(nextSettings);
       await fetch("/api/scrape", {
@@ -185,8 +185,8 @@ export function useScrapeJob({
     await fetchJobStatus();
   }, [cronRunning, scrapeLimit, scrapeSettings, fetchJobStatus]);
 
-  const handleSaveScrapeSettings = useCallback(async () => {
-    const nextSettings = normalizeScrapeSettings(scrapeSettings);
+  const handleSaveScrapeSettings = useCallback(async (settingsOverride?: Partial<ScrapeSettingsState>) => {
+    const nextSettings = normalizeScrapeSettings({ ...scrapeSettings, ...settingsOverride });
     setScrapeSettings(nextSettings);
     setSavingScrapeSettings(true);
     try {

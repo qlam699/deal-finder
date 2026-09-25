@@ -224,7 +224,7 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 - `minPrice: 100000`
 - `maxPrice: 60000000`
 - `minMarginPercent: 10`
-- `skipKeywords: ["bể", "hư", "hỏng", "sọc"]` — case-insensitive substrings matched against title + body; matching ads are skipped (not inserted, not marked seen)
+- `skipKeywords: ["bể", "hư", "hỏng", "sọc", "xác"]` — case-insensitive substrings matched against title + body; matching ads are skipped (not inserted, not marked seen)
 
 ## 8. APIs and Integrations
 
