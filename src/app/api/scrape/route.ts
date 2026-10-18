@@ -34,8 +34,8 @@ export async function POST(request: Request) {
       const saved = saveScrapeSettings(body.settings ?? getScrapeSettings());
       return NextResponse.json({
         success: true,
-        scrapeSettings: saved,
         ...getJobStatus(),
+        scrapeSettings: saved,
       });
     }
 

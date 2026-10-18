@@ -5,7 +5,7 @@
 - Task: Fix scrape limit save in Cài đặt quét
 - Objective: Số tin sẽ quét persists when user clicks Lưu
 - Started: 2026-10-18
-- Status: Completed
+- Status: Completed (build TS fix applied)
 - Priority: High
 
 ## 5. Implementation Progress
@@ -17,6 +17,7 @@
 - [x] Bind UI input to `scrapeSettings.limitPerCategory`; remove separate `scrapeLimit` state
 - [x] Scrape/cron use saved limit; job falls back to settings
 - [x] Docs + `tsc --noEmit` pass
+- [x] Fix TS2783 duplicate `scrapeSettings` in save-settings response (spread order)
 
 ## 6. Modified Files
 
