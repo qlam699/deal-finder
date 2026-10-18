@@ -29,8 +29,6 @@ type ScrapeHeaderProps = {
   onScrapeSettingsOpenChange: (open: boolean) => void;
   scrapeSettings: ScrapeSettingsState;
   setScrapeSettings: Dispatch<SetStateAction<ScrapeSettingsState>>;
-  scrapeLimit: number;
-  setScrapeLimit: (value: number) => void;
   scraping: boolean;
   savingScrapeSettings: boolean;
   cronRunning: boolean;
@@ -48,8 +46,6 @@ function ScrapeHeaderInner({
   onScrapeSettingsOpenChange,
   scrapeSettings,
   setScrapeSettings,
-  scrapeLimit,
-  setScrapeLimit,
   scraping,
   savingScrapeSettings,
   cronRunning,
@@ -241,8 +237,13 @@ function ScrapeHeaderInner({
                     type="number"
                     min={1}
                     max={50}
-                    value={scrapeLimit}
-                    onChange={(e) => setScrapeLimit(Number(e.target.value))}
+                    value={scrapeSettings.limitPerCategory}
+                    onChange={(e) =>
+                      setScrapeSettings((prev) => ({
+                        ...prev,
+                        limitPerCategory: Number(e.target.value),
+                      }))
+                    }
                     disabled={scraping}
                     className="w-24"
                   />

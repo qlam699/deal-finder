@@ -24,6 +24,8 @@ export type ScrapeSettings = {
   minMarginPercent: number;
   /** Case-insensitive substrings; skip ads if title/body contains any. */
   skipKeywords: string[];
+  /** Target published deals per category per scrape run. */
+  limitPerCategory: number;
 };
 
 export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettings = {
@@ -32,7 +34,17 @@ export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettings = {
   maxPrice: 60000000,
   minMarginPercent: 10,
   skipKeywords: ["bể", "hư", "hỏng", "sọc", "xác"],
+  limitPerCategory: 20,
 };
+
+const MIN_SCRAPE_LIMIT = 1;
+const MAX_SCRAPE_LIMIT = 50;
+
+export function clampScrapeLimitSetting(n: unknown, fallback = DEFAULT_SCRAPE_SETTINGS.limitPerCategory): number {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v)) return fallback;
+  return Math.min(MAX_SCRAPE_LIMIT, Math.max(MIN_SCRAPE_LIMIT, v));
+}
 
 const MAX_SKIP_KEYWORDS = 100;
 const MAX_SKIP_KEYWORD_LENGTH = 80;
@@ -76,6 +88,10 @@ function normalizeScrapeSettings(input?: Partial<ScrapeSettings> | null): Scrape
       : DEFAULT_SCRAPE_SETTINGS.minMarginPercent,
     skipKeywords: normalizeSkipKeywords(
       input?.skipKeywords ?? DEFAULT_SCRAPE_SETTINGS.skipKeywords,
+    ),
+    limitPerCategory: clampScrapeLimitSetting(
+      input?.limitPerCategory,
+      DEFAULT_SCRAPE_SETTINGS.limitPerCategory,
     ),
   };
 

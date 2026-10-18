@@ -2,44 +2,33 @@
 
 ## 1. Task Summary
 
-- Task: Skip listings by configurable keywords
-- Objective: Ignore ads whose title/body contain skip keywords during scrape
-- Requested behavior: Settings field for keywords (e.g. bể, hư, no faceid)
-- Expected result: Keywords in scrape_settings; scraper skips matches; UI in Cài đặt quét
-- Started: 2026-09-23
+- Task: Fix scrape limit save in Cài đặt quét
+- Objective: Số tin sẽ quét persists when user clicks Lưu
+- Started: 2026-10-18
 - Status: Completed
-- Priority: Medium
-
-## 2. Scope
-
-### In Scope
-
-- `skipKeywords: string[]` on scrape settings (DB + frontend)
-- Scraper filter before insert
-- Textarea in scrape settings dialog
-
-### Out of Scope
-
-- Retroactive purge of existing products
-- Regex / word-boundary matching (substring, case-insensitive)
+- Priority: High
 
 ## 5. Implementation Progress
 
 ### Changes Completed
 
-- [x] `src/lib/db.ts` — `skipKeywords` + `normalizeSkipKeywords`
-- [x] `src/lib/dashboard/{types,scrape-settings}.ts` — frontend parity + textarea helpers
-- [x] `src/lib/scraper.ts` — skip before `ingestAd` (same pattern as price filter)
-- [x] `src/components/dashboard/scrape-header.tsx` — textarea UI
-- [x] Docs + `tsc` pass
+- [x] Add `limitPerCategory` to DB + frontend scrape settings
+- [x] API `action: "save-settings"` — persist without starting scrape
+- [x] Bind UI input to `scrapeSettings.limitPerCategory`; remove separate `scrapeLimit` state
+- [x] Scrape/cron use saved limit; job falls back to settings
+- [x] Docs + `tsc --noEmit` pass
 
 ## 6. Modified Files
 
 - `src/lib/db.ts`
 - `src/lib/dashboard/types.ts`
 - `src/lib/dashboard/scrape-settings.ts`
-- `src/lib/scraper.ts`
+- `src/lib/background-job.ts`
+- `src/app/api/scrape/route.ts`
+- `src/app/api/cron/route.ts`
+- `src/hooks/use-scrape-job.ts`
 - `src/components/dashboard/scrape-header.tsx`
+- `src/components/dashboard.tsx`
 - `architecture.md`
 - `task_on_progress.md`
 
@@ -47,25 +36,24 @@
 
 ### Completed
 
-- [x] `npx tsc --noEmit` — pass
+- [x] `node node_modules/typescript/bin/tsc --noEmit` — pass
 
 ### Remaining
 
-- [ ] Manual: set keywords → scrape → confirm `[SCRAPER] SKIP keyword=...` in logs
+- [ ] Manual: Cài đặt quét → đổi Số tin → Lưu → mở lại dialog → giá trị còn; Quét dùng đúng limit
 
 ## 11. Next Steps
 
-1. Manual smoke on Cài đặt quét → Lưu → Quét
+1. Manual smoke as above
 2. Commit when user asks
 
 ## 12. Handoff Notes
 
-- Keyword match: case-insensitive substring on `subject` + `body`
-- Skipped ads are not inserted and not written to `seen_products` (same as out-of-price-range)
-- Max 100 keywords, 80 chars each
+- Root cause: limit was ephemeral React state; Save POSTed only `settings` and accidentally started a scrape with default limit 5
+- Fix: `limitPerCategory` in `scrape_settings`; Save uses `{ action: "save-settings", settings }`
 
 ## 13. Last Update
 
-- Updated: 2026-09-23
+- Updated: 2026-10-18
 - Updated by: Auto (Cursor agent)
 - Current branch: main

@@ -8,7 +8,20 @@ export const DEFAULT_SCRAPE_SETTINGS: ScrapeSettingsState = {
   maxPrice: 60000000,
   minMarginPercent: 5,
   skipKeywords: ["bể", "hư", "hỏng", "sọc", "xác"],
+  limitPerCategory: 20,
 };
+
+const MIN_SCRAPE_LIMIT = 1;
+const MAX_SCRAPE_LIMIT = 50;
+
+export function clampLimitPerCategory(
+  n: unknown,
+  fallback = DEFAULT_SCRAPE_SETTINGS.limitPerCategory,
+): number {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v)) return fallback;
+  return Math.min(MAX_SCRAPE_LIMIT, Math.max(MIN_SCRAPE_LIMIT, v));
+}
 
 const MAX_SKIP_KEYWORDS = 100;
 const MAX_SKIP_KEYWORD_LENGTH = 80;
@@ -66,6 +79,10 @@ export function normalizeScrapeSettings(
     minMarginPercent,
     skipKeywords: normalizeSkipKeywords(
       input?.skipKeywords ?? DEFAULT_SCRAPE_SETTINGS.skipKeywords,
+    ),
+    limitPerCategory: clampLimitPerCategory(
+      input?.limitPerCategory,
+      DEFAULT_SCRAPE_SETTINGS.limitPerCategory,
     ),
   };
 }

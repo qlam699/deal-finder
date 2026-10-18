@@ -7,7 +7,7 @@
 - Main users: Single operator (local / VPS); no multi-user auth yet
 - Main business domains: Listing scrape, AI pricing, deal publish filter, category/API-key management, trash
 - Current architecture status: MVP running as Next.js App Router + SQLite; production at `https://deal.codayroi.com`
-- Last verified: 2026-09-22 (mobile card view + prior code/README/deploy docs)
+- Last verified: 2026-10-18 (`limitPerCategory` in scrape settings + save-settings action)
 
 ## 2. Technology Stack
 
@@ -142,7 +142,7 @@ Hard delete does **not** remove `seen_products`, so the listing is not re-ingest
 - Important files: `src/lib/scraper.ts`
 - Dependencies: Chợ Tốt gateway API, `db.insertProduct`
 - Used by: `background-job.ts`
-- Notes: Default scrape limit 5 (clamp 1–50); settings include personal-only, price range, and `skipKeywords` (case-insensitive substring on title+body before insert)
+- Notes: Saved `limitPerCategory` default 20 (clamp 1–50; job fallback still 5 if unset); settings include personal-only, price range, `skipKeywords`, and `limitPerCategory`
 
 ### Price checker (`price-checker.ts`)
 
@@ -216,7 +216,7 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 ### `settings`
 
 - Key-value store
-- Known keys: `scrape_settings` (JSON: `personalOnly`, `minPrice`, `maxPrice`, `minMarginPercent`, `skipKeywords`), `job_status`, migration flags
+- Known keys: `scrape_settings` (JSON: `personalOnly`, `minPrice`, `maxPrice`, `minMarginPercent`, `skipKeywords`, `limitPerCategory`), `job_status`, migration flags
 
 ### Scrape settings defaults (code)
 
@@ -225,16 +225,20 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 - `maxPrice: 60000000`
 - `minMarginPercent: 10`
 - `skipKeywords: ["bể", "hư", "hỏng", "sọc", "xác"]` — case-insensitive substrings matched against title + body; matching ads are skipped (not inserted, not marked seen)
+- `limitPerCategory: 10` (clamp 1–50) — target published deals per category; saved via `POST /api/scrape` `{ action: "save-settings" }`
 
 ## 8. APIs and Integrations
 
 ### `POST /api/scrape`
 
-- Purpose: Run scrape + pricing job (async/in-process)
+- Purpose: Run scrape + pricing job (async/in-process), or save settings only
 - Source: `src/app/api/scrape/route.ts`
 - Authentication: none
-- Request flow: start `runScrapeJob`
-- Response flow: job accepted / status
+- Request flow:
+  - `action: "save-settings"` → persist `scrape_settings` (incl. `limitPerCategory`), no job start
+  - `action: "start-cron"` / `"stop-cron"` → cron control
+  - otherwise → start `runScrapeJob` (limit from body or saved `limitPerCategory`)
+- Response flow: job accepted / status / saved settings
 - Error handling: job `lastError` in status
 - Important files: `background-job.ts`
 
@@ -425,6 +429,7 @@ Document confirmed:
 | 2026-09-22 | Job / cron orchestration | Code inspection | `src/lib/background-job.ts` |
 | 2026-09-22 | Deploy path | Deploy docs + workflow | `deploy/README.md`, `.github/workflows/deploy.yml` |
 | 2026-09-22 | Extra API routes | Glob | `src/app/api/products/check-*` |
+| 2026-10-18 | Scrape limit persistence | Code + tsc | `db.ts`, `scrape/route.ts`, `use-scrape-job.ts` |
 | 2026-09-22 | Products list/card views | Implementation | `product-card-view.tsx`, `dashboard.tsx` |
 | 2026-09-22 | Dashboard refactor hooks/panels | Implementation + tsc | `src/hooks/*`, `src/components/dashboard/*` |
 | 2026-09-23 | Skip keywords scrape filter | Implementation + tsc | `db.ts`, `scraper.ts`, `scrape-header.tsx` |

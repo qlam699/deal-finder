@@ -30,10 +30,19 @@ export async function POST(request: Request) {
       body = {};
     }
 
-    const limitPerCategory = clampScrapeLimit(
-      body.limitPerCategory ?? body.scrapeLimit,
-    );
+    if (body.action === "save-settings") {
+      const saved = saveScrapeSettings(body.settings ?? getScrapeSettings());
+      return NextResponse.json({
+        success: true,
+        scrapeSettings: saved,
+        ...getJobStatus(),
+      });
+    }
+
     const activeSettings = body.settings ? saveScrapeSettings(body.settings) : getScrapeSettings();
+    const limitPerCategory = clampScrapeLimit(
+      body.limitPerCategory ?? body.scrapeLimit ?? activeSettings.limitPerCategory,
+    );
 
     if (body.action === "start-cron") {
       const status = startCron(body.intervalMinutes || 10, limitPerCategory);

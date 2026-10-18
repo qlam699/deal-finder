@@ -97,8 +97,6 @@ export default function Dashboard() {
           onScrapeSettingsOpenChange={scrape.setScrapeSettingsOpen}
           scrapeSettings={scrape.scrapeSettings}
           setScrapeSettings={scrape.setScrapeSettings}
-          scrapeLimit={scrape.scrapeLimit}
-          setScrapeLimit={scrape.setScrapeLimit}
           scraping={scrape.scraping}
           savingScrapeSettings={scrape.savingScrapeSettings}
           cronRunning={scrape.cronRunning}

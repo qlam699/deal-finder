@@ -120,10 +120,13 @@ export async function runScrapeJob(opts?: {
     return;
   }
 
-  const targetPublishedPerCategory = clampScrapeLimit(
-    opts?.limitPerCategory ?? (opts?.mode === "cron" ? cronScrapeLimit : DEFAULT_SCRAPE_LIMIT),
-  );
   const settings = opts?.settings ?? getScrapeSettings();
+  const targetPublishedPerCategory = clampScrapeLimit(
+    opts?.limitPerCategory ??
+      (opts?.mode === "cron" ? cronScrapeLimit : undefined) ??
+      settings.limitPerCategory ??
+      DEFAULT_SCRAPE_LIMIT,
+  );
 
   jobRunning = true;
   status = {

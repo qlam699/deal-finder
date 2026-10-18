@@ -9,6 +9,8 @@ export type ScrapeSettingsState = {
   minMarginPercent: number;
   /** Case-insensitive substrings; skip ads if title/body contains any. */
   skipKeywords: string[];
+  /** Target published deals per category per scrape run. */
+  limitPerCategory: number;
 };
 
 export type ListingCheckStatus = {

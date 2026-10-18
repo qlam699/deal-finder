@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { getJobStatus, startCron, stopCron } from "@/lib/background-job";
+import { getScrapeSettings } from "@/lib/db";
 
 export async function POST(request: Request) {
   const body = await request.json();
 
   if (body.action === "start") {
+    const settings = getScrapeSettings();
     const status = startCron(
       body.intervalMinutes || 10,
-      body.limitPerCategory ?? body.scrapeLimit,
+      body.limitPerCategory ?? body.scrapeLimit ?? settings.limitPerCategory,
     );
     return NextResponse.json({ status: "started", ...status });
   }

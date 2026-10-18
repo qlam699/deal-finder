@@ -5,6 +5,7 @@ import type { ScrapeSettingsState } from "@/lib/dashboard/types";
 import {
   DEFAULT_SCRAPE_SETTINGS,
   SCRAPE_SETTINGS_STORAGE_KEY,
+  clampLimitPerCategory,
   normalizeScrapeSettings,
   readScrapeSettingsFromLocalStorage,
 } from "@/lib/dashboard/scrape-settings";
@@ -43,7 +44,6 @@ export function useScrapeJob({
 }: UseScrapeJobOptions) {
   const [scraping, setScraping] = useState(false);
   const [cronRunning, setCronRunning] = useState(false);
-  const [scrapeLimit, setScrapeLimit] = useState(10);
   const [scrapeSettingsOpen, setScrapeSettingsOpen] = useState(false);
   const [scrapeSettings, setScrapeSettings] = useState<ScrapeSettingsState>(
     readScrapeSettingsFromLocalStorage,
@@ -69,9 +69,6 @@ export function useScrapeJob({
     setCronRunning(!!data.cronRunning);
     if (data?.scrapeSettings) {
       setScrapeSettings(normalizeScrapeSettings(data.scrapeSettings));
-    }
-    if (typeof data.scrapeLimit === "number" && data.scrapeLimit > 0) {
-      setScrapeLimit(data.scrapeLimit);
     }
     if (data.running) {
       setJobMessage("Đang quét ngầm trên server...");
@@ -125,10 +122,9 @@ export function useScrapeJob({
   }, [scraping, cronRunning, fetchJobStatus, fetchProducts, fetchApiKeys, refreshListAjax]);
 
   const handleScrape = useCallback(async (settingsOverride?: Partial<ScrapeSettingsState>) => {
-    const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
     const nextSettings = normalizeScrapeSettings({ ...scrapeSettings, ...settingsOverride });
-    setScrapeLimit(limit);
-    setScrapeSettings(nextSettings);
+    const limit = clampLimitPerCategory(nextSettings.limitPerCategory);
+    setScrapeSettings({ ...nextSettings, limitPerCategory: limit });
     setScraping(true);
     goToProductsPage(1);
     resetSortToNewest();
@@ -137,7 +133,10 @@ export function useScrapeJob({
       const res = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limitPerCategory: limit, settings: nextSettings }),
+        body: JSON.stringify({
+          limitPerCategory: limit,
+          settings: { ...nextSettings, limitPerCategory: limit },
+        }),
       });
       const data = await res.json();
       setJobMessage(
@@ -151,7 +150,6 @@ export function useScrapeJob({
       setJobMessage(`Không start được job: ${String(err)}`);
     }
   }, [
-    scrapeLimit,
     scrapeSettings,
     goToProductsPage,
     resetSortToNewest,
@@ -167,10 +165,10 @@ export function useScrapeJob({
         body: JSON.stringify({ action: "stop-cron" }),
       });
     } else {
-      const limit = Math.min(50, Math.max(1, Math.floor(Number(scrapeLimit)) || 5));
       const nextSettings = normalizeScrapeSettings({ ...scrapeSettings, ...settingsOverride });
-      setScrapeLimit(limit);
-      setScrapeSettings(nextSettings);
+      const limit = clampLimitPerCategory(nextSettings.limitPerCategory);
+      const settings = { ...nextSettings, limitPerCategory: limit };
+      setScrapeSettings(settings);
       await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -178,12 +176,12 @@ export function useScrapeJob({
           action: "start-cron",
           intervalMinutes: 10,
           limitPerCategory: limit,
-          settings: nextSettings,
+          settings,
         }),
       });
     }
     await fetchJobStatus();
-  }, [cronRunning, scrapeLimit, scrapeSettings, fetchJobStatus]);
+  }, [cronRunning, scrapeSettings, fetchJobStatus]);
 
   const handleSaveScrapeSettings = useCallback(async (settingsOverride?: Partial<ScrapeSettingsState>) => {
     const nextSettings = normalizeScrapeSettings({ ...scrapeSettings, ...settingsOverride });
@@ -193,7 +191,7 @@ export function useScrapeJob({
       const res = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: nextSettings }),
+        body: JSON.stringify({ action: "save-settings", settings: nextSettings }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Không lưu được cấu hình quét");
@@ -210,8 +208,6 @@ export function useScrapeJob({
   return {
     scraping,
     cronRunning,
-    scrapeLimit,
-    setScrapeLimit,
     scrapeSettingsOpen,
     setScrapeSettingsOpen,
     scrapeSettings,
