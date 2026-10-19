@@ -78,9 +78,24 @@ function TrashPanelInner({
                 <TableRow key={p.id}>
                   <TableCell className="max-w-md font-medium">
                     <Tooltip>
-                      <TooltipTrigger className="block w-full cursor-help truncate text-left">
-                        {p.title}
-                      </TooltipTrigger>
+                      <TooltipTrigger
+                        render={
+                          p.url ? (
+                            <a
+                              href={p.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block w-full truncate text-left underline-offset-2 hover:underline"
+                            >
+                              {p.title}
+                            </a>
+                          ) : (
+                            <span className="block w-full cursor-help truncate text-left">
+                              {p.title}
+                            </span>
+                          )
+                        }
+                      />
                       <TooltipContent
                         side="bottom"
                         align="start"
