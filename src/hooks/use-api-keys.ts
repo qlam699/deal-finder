@@ -19,11 +19,14 @@ export function useApiKeys() {
   const [reorderingKeys, setReorderingKeys] = useState(false);
   const [geminiModel, setGeminiModelState] = useState(DEFAULT_GEMINI_MODEL);
   const [groqModel, setGroqModelState] = useState(DEFAULT_GROQ_MODEL);
+  const [draftGeminiModel, setDraftGeminiModelState] = useState(DEFAULT_GEMINI_MODEL);
+  const [draftGroqModel, setDraftGroqModelState] = useState(DEFAULT_GROQ_MODEL);
   const [checkingModel, setCheckingModel] = useState(false);
   const [checkMessage, setCheckMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [draftVerified, setDraftVerified] = useState(false);
   const dragKeyIndex = useRef<number | null>(null);
   const apiKeysOrderRef = useRef<ApiKey[]>([]);
+  const modelsHydratedRef = useRef(false);
 
   useEffect(() => {
     apiKeysOrderRef.current = apiKeys;
@@ -54,17 +57,17 @@ export function useApiKeys() {
     setNewLabelState(value);
   }, []);
 
-  const setGeminiModel = useCallback(
+  const setDraftGeminiModel = useCallback(
     (value: string) => {
-      setGeminiModelState(value);
+      setDraftGeminiModelState(value);
       invalidateDraft();
     },
     [invalidateDraft],
   );
 
-  const setGroqModel = useCallback(
+  const setDraftGroqModel = useCallback(
     (value: string) => {
-      setGroqModelState(value);
+      setDraftGroqModelState(value);
       invalidateDraft();
     },
     [invalidateDraft],
@@ -80,15 +83,26 @@ export function useApiKeys() {
       return;
     }
     setApiKeys(Array.isArray(data.keys) ? data.keys : []);
-    if (typeof data.geminiModel === "string" && data.geminiModel.trim()) {
-      setGeminiModelState(data.geminiModel.trim());
-    }
-    if (typeof data.groqModel === "string" && data.groqModel.trim()) {
-      setGroqModelState(data.groqModel.trim());
+    const nextGemini =
+      typeof data.geminiModel === "string" && data.geminiModel.trim()
+        ? data.geminiModel.trim()
+        : null;
+    const nextGroq =
+      typeof data.groqModel === "string" && data.groqModel.trim()
+        ? data.groqModel.trim()
+        : null;
+    // Saved models refresh for the table; draft inputs stay editable during poll.
+    if (nextGemini) setGeminiModelState(nextGemini);
+    if (nextGroq) setGroqModelState(nextGroq);
+    if (!modelsHydratedRef.current) {
+      if (nextGemini) setDraftGeminiModelState(nextGemini);
+      if (nextGroq) setDraftGroqModelState(nextGroq);
+      modelsHydratedRef.current = true;
     }
   }, []);
 
-  const currentModel = newProvider === "groq" ? groqModel.trim() : geminiModel.trim();
+  const currentModel =
+    newProvider === "groq" ? draftGroqModel.trim() : draftGeminiModel.trim();
 
   const verifyAndSaveModel = useCallback(
     async (provider: string, apiKey: string, model: string): Promise<boolean> => {
@@ -143,8 +157,10 @@ export function useApiKeys() {
         if (saveRes.ok) {
           if (provider === "groq" && saveData?.groqModel) {
             setGroqModelState(saveData.groqModel);
+            setDraftGroqModelState(saveData.groqModel);
           } else if (saveData?.geminiModel) {
             setGeminiModelState(saveData.geminiModel);
+            setDraftGeminiModelState(saveData.geminiModel);
           }
         }
 
@@ -327,9 +343,11 @@ export function useApiKeys() {
     addingKey,
     reorderingKeys,
     geminiModel,
-    setGeminiModel,
     groqModel,
-    setGroqModel,
+    draftGeminiModel,
+    setDraftGeminiModel,
+    draftGroqModel,
+    setDraftGroqModel,
     checkingModel,
     checkMessage,
     draftVerified,

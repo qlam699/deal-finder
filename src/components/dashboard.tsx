@@ -169,9 +169,11 @@ export default function Dashboard() {
               onNewLabelChange={apiKeys.setNewLabel}
               reorderingKeys={apiKeys.reorderingKeys}
               geminiModel={apiKeys.geminiModel}
-              onGeminiModelChange={apiKeys.setGeminiModel}
               groqModel={apiKeys.groqModel}
-              onGroqModelChange={apiKeys.setGroqModel}
+              draftGeminiModel={apiKeys.draftGeminiModel}
+              onDraftGeminiModelChange={apiKeys.setDraftGeminiModel}
+              draftGroqModel={apiKeys.draftGroqModel}
+              onDraftGroqModelChange={apiKeys.setDraftGroqModel}
               showModelField={apiKeys.showModelField}
               canCheck={apiKeys.canCheck}
               primaryIsAdd={apiKeys.primaryIsAdd}

@@ -33,9 +33,11 @@ type ApiKeysPanelProps = {
   onNewLabelChange: (value: string) => void;
   reorderingKeys: boolean;
   geminiModel: string;
-  onGeminiModelChange: (value: string) => void;
   groqModel: string;
-  onGroqModelChange: (value: string) => void;
+  draftGeminiModel: string;
+  onDraftGeminiModelChange: (value: string) => void;
+  draftGroqModel: string;
+  onDraftGroqModelChange: (value: string) => void;
   showModelField: boolean;
   canCheck: boolean;
   primaryIsAdd: boolean;
@@ -83,9 +85,11 @@ function ApiKeysPanelInner({
   onNewLabelChange,
   reorderingKeys,
   geminiModel,
-  onGeminiModelChange,
   groqModel,
-  onGroqModelChange,
+  draftGeminiModel,
+  onDraftGeminiModelChange,
+  draftGroqModel,
+  onDraftGroqModelChange,
   showModelField,
   canCheck,
   primaryIsAdd,
@@ -101,8 +105,9 @@ function ApiKeysPanelInner({
   onKeyDrop,
   onKeyDragEnd,
 }: ApiKeysPanelProps) {
-  const modelValue = newProvider === "groq" ? groqModel : geminiModel;
-  const onModelChange = newProvider === "groq" ? onGroqModelChange : onGeminiModelChange;
+  const modelValue = newProvider === "groq" ? draftGroqModel : draftGeminiModel;
+  const onModelChange =
+    newProvider === "groq" ? onDraftGroqModelChange : onDraftGeminiModelChange;
   const modelPlaceholder =
     newProvider === "groq" ? "qwen/qwen3.8-27b" : "gemini-3.5-flash-lite";
 

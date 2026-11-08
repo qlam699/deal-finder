@@ -270,6 +270,7 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
   - `POST action: "save-gemini-model"` / `"save-groq-model"` → persist settings (used after successful check)
   - `POST action: "check-gemini-model"` / `"check-groq-model"` → `{ model, api_key }` typed key only
 - UI: Model field shown for Gemini or Groq; Kiểm tra requires typed key + model; successful check persists model; Thêm also persists model
+- Client state (`use-api-keys.ts`): saved `geminiModel`/`groqModel` refresh on every keys poll (table); draft inputs hydrate once from GET and are not overwritten by scrape/price-check polling so typing stays stable
 - Important files: `db.getGeminiModel` / `getGroqModel`, `price-checker.pingGeminiModel` / `pingGroqModel`
 
 ### `POST /api/cron`
