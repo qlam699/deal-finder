@@ -172,7 +172,7 @@ Default seed: Phones (`5010`), Laptops (`5030`), Tablets (`5040`).
 
 ### 5.5 `settings`
 
-Key-value store (e.g. `timezone_vn_migrated`).
+Key-value store (e.g. `timezone_vn_migrated`, `scrape_settings`, `gemini_model` — default `gemini-3.5-flash-lite`, `groq_model` — default `qwen/qwen3.8-27b`).
 
 ---
 
@@ -198,7 +198,7 @@ Expected JSON: `average` → `market_price` (sell), `recommended_buy_price` → 
 
 **Fallback chain:** ordered by each API key’s `priority` (list top → bottom on the API Keys tab). Scrape-only remains the last resort after all active keys fail.
 
-Supported providers per key: Gemini (`gemini-2.5-flash` + `googleSearch`), Groq (`qwen/qwen3.6-27b`), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini calls use helper scrape first (TGDD + Hoàng Hà + tin tương tự Chợ Tốt HCM).
+Supported providers per key: Gemini (model from `settings.gemini_model`, default `gemini-3.5-flash-lite` + `googleSearch`; editable/checkable on API Keys tab), Groq (model from `settings.groq_model`, default `qwen/qwen3.8-27b`; editable/checkable on API Keys tab), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini calls use helper scrape first (TGDD + Hoàng Hà + tin tương tự Chợ Tốt HCM).
 
 **Margin formula currently used:**
 
@@ -280,10 +280,12 @@ Actions:
 
 ### `GET/POST /api/api-keys`
 
-- `GET`: masked key list
-- `POST action=add`: `{ provider, api_key, label? }`
+- `GET`: `{ keys: [...masked], geminiModel, groqModel }`
+- `POST action=add`: `{ provider, api_key, label?, gemini_model?, groq_model? }`
 - `POST action=delete`: `{ id }`
 - `POST action=reset`: `{ id }`
+- `POST action=save-gemini-model` / `save-groq-model`: `{ model }`
+- `POST action=check-gemini-model` / `check-groq-model`: `{ model, api_key }` (typed key only)
 
 ### `POST /api/cron`
 

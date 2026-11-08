@@ -2,6 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import OpenAI from "openai";
 import * as cheerio from "cheerio";
 import {
+  getGeminiModel,
+  getGroqModel,
   getNextAvailableKey,
   incrementKeyUsage,
   markKeyError,
@@ -92,16 +94,61 @@ function normalizeDealPrice(
   return deal;
 }
 
+/** Minimal call to verify an API key + model id work. */
+export async function pingGeminiModel(
+  apiKey: string,
+  modelName: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const name = modelName.trim();
+  if (!name) {
+    return { ok: false, error: "Gemini model is required" };
+  }
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: name });
+    await model.generateContent("Reply with OK");
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+}
+
+/** Minimal Groq chat call to verify an API key + model id work. */
+export async function pingGroqModel(
+  apiKey: string,
+  modelName: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const name = modelName.trim();
+  if (!name) {
+    return { ok: false, error: "Groq model is required" };
+  }
+  try {
+    const client = new OpenAI({ baseURL: "https://api.groq.com/openai/v1", apiKey });
+    await client.chat.completions.create({
+      model: name,
+      messages: [{ role: "user", content: "Reply with OK" }],
+      max_completion_tokens: 16,
+      temperature: 0,
+    });
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+}
+
 // Provider implementations
 async function checkWithGemini(
   apiKey: string,
   sellerInfo: string,
   listingPrice: number,
 ): Promise<PriceResult | null> {
-  console.log(`[PRICE] Trying provider=gemini`);
+  const modelName = getGeminiModel();
+  console.log(`[PRICE] Trying provider=gemini model=${modelName}`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: modelName,
     tools: [{ googleSearch: {} } as unknown as import("@google/generative-ai").Tool],
   });
 
@@ -116,19 +163,20 @@ async function checkWithGroq(
   listingPrice: number,
   scrapedData?: string,
 ): Promise<PriceResult | null> {
-  console.log(`[PRICE] Trying provider=groq model=qwen/qwen3.6-27b`);
+  const modelName = getGroqModel();
+  console.log(`[PRICE] Trying provider=groq model=${modelName}`);
   const client = new OpenAI({ baseURL: "https://api.groq.com/openai/v1", apiKey });
   const prompt = scrapedData
     ? `Dựa vào dữ liệu sau từ các trang bán hàng:\n${scrapedData}\n\n${PRICE_PROMPT(sellerInfo, listingPrice)}`
     : PRICE_PROMPT(sellerInfo, listingPrice);
 
   const response = (await client.chat.completions.create({
-    model: "qwen/qwen3.6-27b",
+    model: modelName,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.1,
     max_completion_tokens: 1024,
     stream: false,
-    // Disable thinking mode so response is clean JSON (Groq Qwen3.6).
+    // Disable thinking mode so response is clean JSON when the model supports it.
     reasoning_effort: "none",
   } as Parameters<typeof client.chat.completions.create>[0] & {
     reasoning_effort?: string;

@@ -172,7 +172,7 @@ Seed mặc định: Điện thoại (`5010`), Laptop (`5030`), Máy tính bảng
 
 ### 5.5 `settings`
 
-Key-value (vd: `timezone_vn_migrated`).
+Key-value (vd: `timezone_vn_migrated`, `scrape_settings`, `gemini_model` — mặc định `gemini-3.5-flash-lite`, `groq_model` — mặc định `qwen/qwen3.8-27b`).
 
 ---
 
@@ -198,7 +198,7 @@ AI trả JSON: `average` → `market_price` (bán), `recommended_buy_price` → 
 
 **Fallback chain:** theo `priority` của từng API key (trên → dưới ở tab API Keys). Scrape thuần là bước cuối nếu mọi key active thất bại.
 
-Provider hỗ trợ: Gemini (`gemini-2.5-flash` + `googleSearch`), Groq (`qwen/qwen3.6-27b`), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini có scrape TGDD hỗ trợ trước khi gọi.
+Provider hỗ trợ: Gemini (model từ `settings.gemini_model`, mặc định `gemini-3.5-flash-lite` + `googleSearch`; chỉnh/kiểm tra trên tab API Keys), Groq (model từ `settings.groq_model`, mặc định `qwen/qwen3.8-27b`; chỉnh/kiểm tra trên tab API Keys), Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`, key `ACCOUNT_ID|API_TOKEN`), Qwen (`qwen-turbo`), OpenRouter (`openrouter/free`). Non-Gemini có scrape TGDD hỗ trợ trước khi gọi.
 
 **Công thức margin hiện dùng:**
 
@@ -280,10 +280,12 @@ Actions:
 
 ### `GET/POST /api/api-keys`
 
-- `GET`: danh sách key đã mask
-- `POST action=add`: `{ provider, api_key, label? }`
+- `GET`: `{ keys: [...đã mask], geminiModel, groqModel }`
+- `POST action=add`: `{ provider, api_key, label?, gemini_model?, groq_model? }`
 - `POST action=delete`: `{ id }`
 - `POST action=reset`: `{ id }`
+- `POST action=save-gemini-model` / `save-groq-model`: `{ model }`
+- `POST action=check-gemini-model` / `check-groq-model`: `{ model, api_key }` (chỉ key đang gõ)
 
 ### `POST /api/cron`
 

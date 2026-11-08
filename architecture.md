@@ -7,7 +7,7 @@
 - Main users: Single operator (local / VPS); no multi-user auth yet
 - Main business domains: Listing scrape, AI pricing, deal publish filter, category/API-key management, trash
 - Current architecture status: MVP running as Next.js App Router + SQLite; production at `https://deal.codayroi.com`
-- Last verified: 2026-10-18 (`limitPerCategory` in scrape settings + save-settings action)
+- Last verified: 2026-11-08 (configurable Gemini model via `settings.gemini_model`)
 
 ## 2. Technology Stack
 
@@ -151,7 +151,7 @@ Hard delete does **not** remove `seen_products`, so the listing is not re-ingest
 - Important files: `src/lib/price-checker.ts`
 - Dependencies: provider SDKs, `db` key rotation helpers
 - Used by: `background-job.ts`, price-check jobs
-- Notes: Margin formula `((market_price - chotot_price) / market_price) * 100`
+- Notes: Margin formula `((market_price - chotot_price) / market_price) * 100`; Gemini model from `getGeminiModel()` (default `gemini-3.5-flash-lite`); Groq model from `getGroqModel()` (default `qwen/qwen3.8-27b`)
 
 ### Background job (`background-job.ts`)
 
@@ -216,7 +216,7 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 ### `settings`
 
 - Key-value store
-- Known keys: `scrape_settings` (JSON: `personalOnly`, `minPrice`, `maxPrice`, `minMarginPercent`, `skipKeywords`, `limitPerCategory`), `job_status`, migration flags
+- Known keys: `scrape_settings` (JSON: `personalOnly`, `minPrice`, `maxPrice`, `minMarginPercent`, `skipKeywords`, `limitPerCategory`), `gemini_model` (default `gemini-3.5-flash-lite`), `groq_model` (default `qwen/qwen3.8-27b`), `job_status`, migration flags
 
 ### Scrape settings defaults (code)
 
@@ -262,8 +262,15 @@ File: `data.db` (auto-created). Timestamps use `datetime('now', 'localtime')`; U
 
 ### `GET/POST /api/api-keys`
 
-- Purpose: List (masked) / add / delete / reset / reorder priorities
+- Purpose: List (masked) / add / delete / reset / reorder priorities; save/check Gemini & Groq models
 - Source: `src/app/api/api-keys/route.ts`
+- Request flow:
+  - `GET` → `{ keys: [...masked], geminiModel, groqModel }`
+  - `POST action: "add"` may include `gemini_model` / `groq_model` for those providers
+  - `POST action: "save-gemini-model"` / `"save-groq-model"` → persist settings (used after successful check)
+  - `POST action: "check-gemini-model"` / `"check-groq-model"` → `{ model, api_key }` typed key only
+- UI: Model field shown for Gemini or Groq; Kiểm tra requires typed key + model; successful check persists model; Thêm also persists model
+- Important files: `db.getGeminiModel` / `getGroqModel`, `price-checker.pingGeminiModel` / `pingGroqModel`
 
 ### `POST /api/cron`
 
@@ -430,6 +437,7 @@ Document confirmed:
 | 2026-09-22 | Deploy path | Deploy docs + workflow | `deploy/README.md`, `.github/workflows/deploy.yml` |
 | 2026-09-22 | Extra API routes | Glob | `src/app/api/products/check-*` |
 | 2026-10-18 | Scrape limit persistence | Code + tsc | `db.ts`, `scrape/route.ts`, `use-scrape-job.ts` |
+| 2026-11-08 | Configurable Gemini model | Implementation + tsc | `db.getGeminiModel`, `api-keys/route.ts`, `api-keys-panel.tsx` |
 | 2026-09-22 | Products list/card views | Implementation | `product-card-view.tsx`, `dashboard.tsx` |
 | 2026-09-22 | Dashboard refactor hooks/panels | Implementation + tsc | `src/hooks/*`, `src/components/dashboard/*` |
 | 2026-09-23 | Skip keywords scrape filter | Implementation + tsc | `db.ts`, `scraper.ts`, `scrape-header.tsx` |

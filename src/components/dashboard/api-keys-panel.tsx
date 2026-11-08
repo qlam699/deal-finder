@@ -27,9 +27,23 @@ type ApiKeysPanelProps = {
   apiKeys: ApiKey[];
   newProvider: string;
   onNewProviderChange: (value: string) => void;
-  addingKey: boolean;
+  newApiKey: string;
+  onNewApiKeyChange: (value: string) => void;
+  newLabel: string;
+  onNewLabelChange: (value: string) => void;
   reorderingKeys: boolean;
-  onAddApiKey: (e: FormEvent<HTMLFormElement>) => void;
+  geminiModel: string;
+  onGeminiModelChange: (value: string) => void;
+  groqModel: string;
+  onGroqModelChange: (value: string) => void;
+  showModelField: boolean;
+  canCheck: boolean;
+  primaryIsAdd: boolean;
+  busy: boolean;
+  checkingModel: boolean;
+  addingKey: boolean;
+  checkMessage: { ok: boolean; text: string } | null;
+  onPrimaryAction: (e: FormEvent<HTMLFormElement>) => void;
   onDeleteKey: (id: number) => void;
   onResetKey: (id: number) => void;
   onKeyDragStart: (index: number) => void;
@@ -46,13 +60,40 @@ function providerLabel(provider: string): string {
   return "Gemini";
 }
 
+function modelForProvider(
+  provider: string,
+  geminiModel: string,
+  groqModel: string,
+): string {
+  if (provider === "gemini") return geminiModel || "gemini-3.5-flash-lite";
+  if (provider === "groq") return groqModel || "qwen/qwen3.8-27b";
+  if (provider === "qwen") return "qwen-turbo";
+  if (provider === "openrouter") return "openrouter/free";
+  if (provider === "cloudflare") return "@cf/meta/llama-3.1-8b-instruct-fast";
+  return "—";
+}
+
 function ApiKeysPanelInner({
   apiKeys,
   newProvider,
   onNewProviderChange,
-  addingKey,
+  newApiKey,
+  onNewApiKeyChange,
+  newLabel,
+  onNewLabelChange,
   reorderingKeys,
-  onAddApiKey,
+  geminiModel,
+  onGeminiModelChange,
+  groqModel,
+  onGroqModelChange,
+  showModelField,
+  canCheck,
+  primaryIsAdd,
+  busy,
+  checkingModel,
+  addingKey,
+  checkMessage,
+  onPrimaryAction,
   onDeleteKey,
   onResetKey,
   onKeyDragStart,
@@ -60,30 +101,43 @@ function ApiKeysPanelInner({
   onKeyDrop,
   onKeyDragEnd,
 }: ApiKeysPanelProps) {
+  const modelValue = newProvider === "groq" ? groqModel : geminiModel;
+  const onModelChange = newProvider === "groq" ? onGroqModelChange : onGeminiModelChange;
+  const modelPlaceholder =
+    newProvider === "groq" ? "qwen/qwen3.8-27b" : "gemini-3.5-flash-lite";
+
+  const primaryDisabled = busy || !canCheck;
+  const primaryLabel = (() => {
+    if (checkingModel) return "Đang kiểm tra...";
+    if (addingKey) return "Đang thêm...";
+    if (primaryIsAdd) return "Thêm";
+    return "Kiểm tra";
+  })();
+
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="pb-3">
         <CardTitle>Quản lý API Keys</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="mb-4 text-sm text-muted-foreground">
+        <p className="mb-3 text-sm text-muted-foreground">
           Kéo thả để xếp thứ tự ưu tiên (trên → dưới = chạy trước → sau). Key
           inactive/hết quota bị bỏ qua. Cuối cùng vẫn fallback scrape thuần nếu
           mọi AI thất bại.
           {reorderingKeys ? " Đang lưu thứ tự…" : ""}
         </p>
 
-        <form onSubmit={onAddApiKey} className="mb-6 flex gap-2">
+        <form onSubmit={onPrimaryAction} className="mb-2 flex flex-wrap items-center gap-2">
           <Select
             value={newProvider}
             onValueChange={(v) => onNewProviderChange(v || "gemini")}
           >
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-36 shrink-0">
               <SelectValue placeholder="Provider">{providerLabel(newProvider)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="gemini">Gemini</SelectItem>
-              <SelectItem value="groq">Groq (Qwen3.6-27B)</SelectItem>
+              <SelectItem value="groq">Groq</SelectItem>
               <SelectItem value="cloudflare">Cloudflare Workers AI</SelectItem>
               <SelectItem value="qwen">Qwen</SelectItem>
               <SelectItem value="openrouter">OpenRouter</SelectItem>
@@ -91,17 +145,50 @@ function ApiKeysPanelInner({
           </Select>
           <Input
             name="api_key"
+            value={newApiKey}
+            onChange={(e) => onNewApiKeyChange(e.target.value)}
             placeholder={
               newProvider === "cloudflare" ? "ACCOUNT_ID|API_TOKEN" : "API Key"
             }
             required
-            className="flex-1"
+            className="min-w-[10rem] flex-1"
+            disabled={busy}
           />
-          <Input name="label" placeholder="Nhãn (tùy chọn)" className="w-40" />
-          <Button type="submit" disabled={addingKey}>
-            {addingKey ? "Đang thêm..." : "Thêm"}
+          {showModelField && (
+            <Input
+              name="model"
+              value={modelValue}
+              onChange={(e) => onModelChange(e.target.value)}
+              placeholder={modelPlaceholder}
+              className="min-w-[12rem] flex-[1.2] font-mono text-sm"
+              disabled={busy}
+            />
+          )}
+          <Input
+            name="label"
+            value={newLabel}
+            onChange={(e) => onNewLabelChange(e.target.value)}
+            placeholder="Nhãn"
+            className="w-28 shrink-0"
+            disabled={busy}
+          />
+          <Button type="submit" className="shrink-0" disabled={primaryDisabled}>
+            {primaryLabel}
           </Button>
         </form>
+
+        {showModelField && checkMessage && (
+          <p
+            className={
+              checkMessage.ok
+                ? "mb-4 text-sm text-green-500"
+                : "mb-4 text-sm text-destructive"
+            }
+          >
+            {checkMessage.text}
+          </p>
+        )}
+        {(!showModelField || !checkMessage) && <div className="mb-4" />}
 
         <Table>
           <TableHeader>
@@ -109,6 +196,7 @@ function ApiKeysPanelInner({
               <TableHead className="w-10"></TableHead>
               <TableHead className="w-12">#</TableHead>
               <TableHead>Provider</TableHead>
+              <TableHead>Model</TableHead>
               <TableHead>Key</TableHead>
               <TableHead>Nhãn</TableHead>
               <TableHead>Hôm nay</TableHead>
@@ -141,6 +229,12 @@ function ApiKeysPanelInner({
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline">{k.provider}</Badge>
+                </TableCell>
+                <TableCell
+                  className="max-w-[14rem] truncate font-mono text-sm"
+                  title={modelForProvider(k.provider, geminiModel, groqModel)}
+                >
+                  {modelForProvider(k.provider, geminiModel, groqModel)}
                 </TableCell>
                 <TableCell className="font-mono text-sm">{k.api_key}</TableCell>
                 <TableCell>{k.label || "—"}</TableCell>
@@ -177,7 +271,7 @@ function ApiKeysPanelInner({
             ))}
             {apiKeys.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-4 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-4 text-center text-muted-foreground">
                   Chưa có API key nào. Thêm key để bắt đầu tra giá tự động.
                 </TableCell>
               </TableRow>

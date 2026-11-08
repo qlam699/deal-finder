@@ -130,6 +130,49 @@ export function saveScrapeSettings(input?: Partial<ScrapeSettings> | null): Scra
   return next;
 }
 
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b";
+
+export function getGeminiModel(): string {
+  const row = getDb()
+    .prepare("SELECT value FROM settings WHERE key = 'gemini_model'")
+    .get() as { value?: string } | undefined;
+
+  const model = row?.value?.trim();
+  return model || DEFAULT_GEMINI_MODEL;
+}
+
+export function saveGeminiModel(input: string): string {
+  const model = String(input || "").trim();
+  if (!model) {
+    throw new Error("Gemini model is required");
+  }
+  getDb()
+    .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini_model', ?)")
+    .run(model);
+  return model;
+}
+
+export function getGroqModel(): string {
+  const row = getDb()
+    .prepare("SELECT value FROM settings WHERE key = 'groq_model'")
+    .get() as { value?: string } | undefined;
+
+  const model = row?.value?.trim();
+  return model || DEFAULT_GROQ_MODEL;
+}
+
+export function saveGroqModel(input: string): string {
+  const model = String(input || "").trim();
+  if (!model) {
+    throw new Error("Groq model is required");
+  }
+  getDb()
+    .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('groq_model', ?)")
+    .run(model);
+  return model;
+}
+
 function initSchema() {
   const d = db!;
 
